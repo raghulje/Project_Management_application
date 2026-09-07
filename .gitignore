@@ -1,0 +1,8 @@
+node_modules/
+client/out/
+server/dist/
+server/storage/
+.env
+server/.env
+client/src/tracker/lib/kfAccessKeys.js
+*.log
