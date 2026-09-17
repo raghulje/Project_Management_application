@@ -9,6 +9,7 @@ export type EmailCategoryKey =
   | 'assignment'
   | 'overdue'
   | 'status_change'
+  | 'approval_request'
 
 export type NotificationConfig = {
   email_notifications: Record<EmailCategoryKey, boolean>
@@ -19,16 +20,17 @@ export type NotificationConfig = {
 
 const DEFAULT_CONFIG: NotificationConfig = {
   email_notifications: {
-    project_lifecycle: true,
-    task_lifecycle: true,
-    subtask_lifecycle: true,
-    assignment: true,
-    overdue: true,
-    status_change: true,
+    project_lifecycle: false,
+    task_lifecycle: false,
+    subtask_lifecycle: false,
+    assignment: false,
+    overdue: false,
+    status_change: false,
+    approval_request: false,
   },
   extra_ops_emails: '',
-  overdue_to_assignee: true,
-  workflow_to_ops_roles: true,
+  overdue_to_assignee: false,
+  workflow_to_ops_roles: false,
 }
 
 export const EMAIL_CATEGORIES: { key: EmailCategoryKey; label: string }[] = [
@@ -38,6 +40,7 @@ export const EMAIL_CATEGORIES: { key: EmailCategoryKey; label: string }[] = [
   { key: 'assignment', label: 'Task / subtask assigned or reassigned' },
   { key: 'overdue', label: 'Overdue project / task / subtask digests' },
   { key: 'status_change', label: 'Status, RAG, or priority changes' },
+  { key: 'approval_request', label: 'L1 field-access requests and grants' },
 ]
 
 function parseConfig(raw: unknown): NotificationConfig {
@@ -58,8 +61,8 @@ function parseConfig(raw: unknown): NotificationConfig {
   return {
     email_notifications: en,
     extra_ops_emails: String(obj.extra_ops_emails ?? ''),
-    overdue_to_assignee: obj.overdue_to_assignee === false ? false : true,
-    workflow_to_ops_roles: obj.workflow_to_ops_roles === false ? false : true,
+    overdue_to_assignee: obj.overdue_to_assignee === true,
+    workflow_to_ops_roles: obj.workflow_to_ops_roles === true,
   }
 }
 
@@ -86,12 +89,34 @@ export async function saveNotificationConfig(partial: Partial<NotificationConfig
   return next
 }
 
+export async function disableAllNotifications() {
+  return saveNotificationConfig({
+    email_notifications: {
+      project_lifecycle: false,
+      task_lifecycle: false,
+      subtask_lifecycle: false,
+      assignment: false,
+      overdue: false,
+      status_change: false,
+      approval_request: false,
+    },
+    overdue_to_assignee: false,
+    workflow_to_ops_roles: false,
+  })
+}
+
+export function notificationsEnabled() {
+  const raw = String(process.env.NOTIFICATIONS_ENABLED ?? 'false').trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'yes'
+}
+
 export async function isEmailCategoryEnabled(category: EmailCategoryKey | string): Promise<boolean> {
+  if (!notificationsEnabled()) return false
   if (!mailConfigured()) return false
   const cfg = await getNotificationConfig()
   const key = category as EmailCategoryKey
   if (key in cfg.email_notifications) return Boolean(cfg.email_notifications[key])
-  return true
+  return false
 }
 
 export function splitEmails(raw: string): string[] {
@@ -155,6 +180,9 @@ export async function notificationAdminSnapshot() {
       { key: 'subtask.assigned', category: 'assignment', label: 'Subtask assigned' },
       { key: 'subtask.overdue', category: 'overdue', label: 'Subtask overdue' },
       { key: 'status.changed', category: 'status_change', label: 'Status / RAG change' },
+      { key: 'field_access.requested', category: 'approval_request', label: 'Assignee requested locked-field access' },
+      { key: 'field_access.granted', category: 'approval_request', label: 'L1 granted field access' },
+      { key: 'field_access.denied', category: 'approval_request', label: 'L1 denied field access' },
     ],
   }
 }

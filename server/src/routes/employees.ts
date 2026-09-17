@@ -116,9 +116,12 @@ employeesRouter.get('/selectlist', async (req, res) => {
   `
   const params: unknown[] = []
   if (q) {
-    sql += ` AND (first_name LIKE ? OR last_name LIKE ? OR employee_code LIKE ? OR email LIKE ?)`
+    sql += ` AND (
+      first_name LIKE ? OR last_name LIKE ? OR employee_code LIKE ? OR email LIKE ?
+      OR CONCAT(first_name, ' ', last_name) LIKE ?
+    )`
     const like = `%${q}%`
-    params.push(like, like, like, like)
+    params.push(like, like, like, like, like)
   }
   const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 10000)
   sql += ' ORDER BY first_name ASC, last_name ASC LIMIT ?'

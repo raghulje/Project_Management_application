@@ -81,6 +81,7 @@ export async function runPendingSchemaMigrations(): Promise<SchemaMigrateResult>
       ['projects', 'tco_efforts', 'DECIMAL(10,2) NULL'],
       ['projects', 'risk_mitigation_details', 'TEXT NULL'],
       ['projects', 'assignee_name', 'VARCHAR(191) NULL'],
+      ['record_files', 'kind', 'VARCHAR(64) NULL'],
     ]
     for (const [table, col, def] of extraCols) {
       const [have] = await root.query<mysql.RowDataPacket[]>(

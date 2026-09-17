@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { RevisionChangeLines } from '../../../lib/revisionAudit.jsx';
 
 const JELLY_IN = {
   type: 'spring',
@@ -312,32 +313,7 @@ export default function ProjectDrillDownModal({ project, onClose }) {
                                 style={{ boxShadow: '0 0 0 2px #FB8C00' }}
                               />
                               <div className="rounded-xl border border-orange-100 bg-orange-50/40 p-4">
-                                <div className="mb-2 flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-[#FB8C00]">Revision #{idx + 1}</span>
-                                  <span className="text-xs text-[#7F8C8D]">{rev.date}</span>
-                                </div>
-                                {Array.isArray(rev.changes) && rev.changes.length ? (
-                                  <div className="mb-2 space-y-1.5">
-                                    {rev.changes.map((c, i) => (
-                                      <div key={`${c.field || c.label}-${i}`} className="flex flex-wrap items-center gap-2">
-                                        <span className="text-xs font-semibold text-[#2C3E50]">{c.label || c.field}</span>
-                                        <span className="text-xs text-[#7F8C8D] line-through">{c.from || '—'}</span>
-                                        <i className="ri-arrow-right-line text-xs text-[#FB8C00]" />
-                                        <span className="text-xs font-semibold text-[#FB8C00]">{c.to || '—'}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="mb-2 flex items-center gap-2">
-                                      <span className="text-xs text-[#7F8C8D] line-through">{rev.previousEndDate}</span>
-                                      <i className="ri-arrow-right-line text-xs text-[#FB8C00]" />
-                                      <span className="text-xs font-semibold text-[#FB8C00]">{rev.newEndDate}</span>
-                                    </div>
-                                    <p className="text-sm text-[#2C3E50]">{rev.reason}</p>
-                                  </>
-                                )}
-                                <p className="mt-1 text-xs text-[#7F8C8D]">Revised by: {rev.revisedBy}</p>
+                                <RevisionChangeLines rev={rev} />
                               </div>
                             </div>
                           ))}

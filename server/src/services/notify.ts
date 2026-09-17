@@ -1,7 +1,7 @@
 import { get, run, now } from '../db/index.js'
 import { sendMail } from './mail.js'
 import { mailConfigured } from './mail.js'
-import { isEmailCategoryEnabled, resolveWorkflowRecipients, getNotificationConfig, type EmailCategoryKey } from './notificationConfig.js'
+import { isEmailCategoryEnabled, resolveWorkflowRecipients, getNotificationConfig, notificationsEnabled, type EmailCategoryKey } from './notificationConfig.js'
 import { createEmailLog, updateEmailLog } from './emailLog.js'
 
 function appBase() {
@@ -104,22 +104,31 @@ export type WorkflowNotifyInput = {
   projectCode?: string | null
   taskCode?: string | null
   assigneeEmail?: string | null
+  extraTo?: string[]
+  skipOps?: boolean
+  ctaLabel?: string
 }
 
 export function notifyWorkflow(input: WorkflowNotifyInput) {
+  if (!notificationsEnabled()) return
   void (async () => {
     const to: string[] = []
     try {
       const enabled = await isEmailCategoryEnabled(input.category)
-      const ops = enabled ? await resolveWorkflowRecipients() : []
       if (input.assigneeEmail?.includes('@')) to.push(input.assigneeEmail)
-      to.push(...ops)
+      for (const extra of input.extraTo || []) {
+        if (String(extra).includes('@')) to.push(String(extra))
+      }
+      if (!input.skipOps) {
+        const ops = enabled ? await resolveWorkflowRecipients() : []
+        to.push(...ops)
+      }
       const unique = [...new Set(to.map((e) => e.trim().toLowerCase()).filter((e) => e.includes('@')))]
       const { html, text } = brandedEmail({
         title: input.title,
         intro: input.intro,
         fields: input.fields,
-        ctaLabel: 'View record',
+        ctaLabel: input.ctaLabel || 'View record',
         ctaUrl: input.ctaPath ? `${appBase()}${input.ctaPath.startsWith('/') ? '' : '/'}${input.ctaPath}` : appBase(),
       })
 

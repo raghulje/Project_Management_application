@@ -3,17 +3,11 @@ import { useState, useCallback, useContext, useEffect, useRef, useMemo, Fragment
 import { motion } from 'framer-motion';
 import AppLayout from './components/feature/AppLayout.jsx';
 import { KissflowSDKContext, kf } from './sdk/index.js';
-import {
-  createTaskInstance,
-  createSubtaskInstance,
-  openTaskDraft,
-  openSubtaskDraft,
-  fetchAllSubtasks,
-  filterSubtasksForTask,
-} from './lib/kfProjectTrackerKarthika.js';
+import { fetchAllSubtasks, filterSubtasksForTask } from './lib/kfProjectTrackerKarthika.js';
 import { kfGetJson, resolveKissflowAccountId } from './lib/kfRuntime.js';
 import { fetchTaskTrackerData } from './lib/kfTaskTracker.js';
 import { fetchChangeRequestDashboardData } from './lib/kfChangeRequestDashboard.js';
+import { RevisionChangeLines } from './lib/revisionAudit.jsx';
 import SatelliteOrbitMenu from './components/SatelliteOrbitMenu.jsx';
 import PtSelect from './components/PtSelect.jsx';
 import SubtaskAccordionRow from './components/SubtaskAccordionRow.jsx';
@@ -27,7 +21,7 @@ import {
   compareDateValue,
 } from './components/TableColumnHeaders.jsx';
 import { DEFAULT_SATELLITE_OPTIONS } from './lib/kfSatelliteCreate.js';
-import { openPmRecord, scrollPmToElement } from './pmApi.js';
+import { goPmNewSubtask, goPmNewTask, openPmRecord, scrollPmToElement } from './pmApi.js';
 
 function resolveRoleName(roleLike) {
   if (!roleLike) return '';
@@ -337,9 +331,6 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, onC
               {trend.value}
             </p>
           ) : null}
-          <p className="mt-2 text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100">
-            Click to view →
-          </p>
         </div>
 
         <div
@@ -363,7 +354,7 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, onC
 const KPI_FOCUS = {
   'total-projects': { section: 'health', projectStatus: 'all', label: 'All change requests' },
   'active-projects': { section: 'health', projectStatus: '__active__', label: 'Active change requests' },
-  'completed-projects': { section: 'health', projectStatus: 'Completed', label: 'Completed change requests' },
+  'completed-projects': { section: 'health', projectStatus: '__completed__', label: 'Completed change requests' },
   'delayed-projects': { section: 'delay', delayType: 'delayed', label: 'Delayed change requests' },
   'total-tasks': { section: 'subtasks', taskStatus: 'all', label: 'All tasks' },
   'open-tasks': { section: 'subtasks', taskStatus: '__open__', label: 'Open tasks' },
@@ -969,7 +960,10 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
         if (nameFilter !== 'all' && row.name !== nameFilter) return false;
         if (ragFilter !== 'all' && row.rag !== ragFilter) return false;
         if (statusFilter === '__active__') {
-          if (row.status === 'Completed') return false;
+          if (row.status === 'Completed' || String(row.status || '').toLowerCase() === 'closed') return false;
+        } else if (statusFilter === '__completed__' || statusFilter === 'Completed') {
+          const s = String(row.status || '').trim().toLowerCase();
+          if (!(s === 'completed' || s === 'closed' || s === 'done' || s.includes('complete'))) return false;
         } else if (statusFilter !== 'all' && row.status !== statusFilter) {
           return false;
         }
@@ -1096,6 +1090,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
       filterOptions: [
         { value: 'all', label: 'All Status' },
         { value: '__active__', label: 'Active (not completed)' },
+        { value: '__completed__', label: 'Completed (closed)' },
         ...statuses.map((s) => ({ value: s, label: s })),
       ],
     },
@@ -1153,6 +1148,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
               options={[
                 { value: 'all', label: 'All Status' },
                 { value: '__active__', label: 'Active (not completed)' },
+                { value: '__completed__', label: 'Completed (closed)' },
                 ...statuses.map((s) => ({ value: s, label: s })),
               ]}
             />
@@ -2563,32 +2559,7 @@ function ProjectDrillDownPanel({
                         style={{ boxShadow: '0 0 0 2px #FB8C00' }}
                       />
                       <div className="rounded-xl border border-orange-100 bg-orange-50/40 p-4">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-xs font-semibold text-[#FB8C00]">Revision #{idx + 1}</span>
-                          <span className="text-xs text-[#7F8C8D]">{rev.date}</span>
-                        </div>
-                                {Array.isArray(rev.changes) && rev.changes.length ? (
-                          <div className="mb-2 space-y-1.5">
-                            {rev.changes.map((c, i) => (
-                              <div key={`${c.field || c.label}-${i}`} className="flex flex-wrap items-center gap-2">
-                                <span className="text-xs font-semibold text-[#2C3E50]">{c.label || c.field}</span>
-                                <span className="text-xs text-[#7F8C8D] line-through">{c.from || '—'}</span>
-                                <i className="ri-arrow-right-line text-xs text-[#FB8C00]" />
-                                <span className="text-xs font-semibold text-[#FB8C00]">{c.to || '—'}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="mb-2 flex items-center gap-2">
-                              <span className="text-xs text-[#7F8C8D] line-through">{rev.previousEndDate}</span>
-                              <i className="ri-arrow-right-line text-xs text-[#FB8C00]" />
-                              <span className="text-xs font-semibold text-[#FB8C00]">{rev.newEndDate}</span>
-                            </div>
-                            <p className="text-sm text-[#2C3E50]">{rev.reason}</p>
-                          </>
-                        )}
-                        <p className="mt-1 text-xs text-[#7F8C8D]">Revised by: {rev.revisedBy}</p>
+                        <RevisionChangeLines rev={rev} />
                       </div>
                     </div>
                   ))}
@@ -2708,79 +2679,13 @@ function DashboardPagePremium({ useLayout = true }) {
   }, [reloadDashboardData]);
 
   const handleCreateTaskForProject = useCallback(
-    async (project) => {
-      const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-      if (!sdk) {
-        console.warn('Create task: Kissflow SDK not available');
-        return false;
-      }
-
-      const projectId = resolveProjectBusinessId(project);
-      if (!projectId) {
-        sdk?.client?.showInfo?.('Missing project id on this row (expected e.g. PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `proj-${project?.id ?? projectId}`;
-      if (dashboardRowCreateLock.has(lockKey)) return false;
-
-      dashboardRowCreateLock.add(lockKey);
-      try {
-        const created = await createTaskInstance(sdk, projectId);
-        void openTaskDraft(sdk, created.instanceId, created.activityInstanceId)
-          .then(() => reloadDashboardData())
-          .catch((openError) => {
-            console.warn('Open task draft failed:', openError);
-            sdk?.client?.showInfo?.(openError?.message || 'Failed to open task form.');
-          });
-        return true;
-      } catch (error) {
-        console.warn('Create task failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create task.');
-        return false;
-      } finally {
-        dashboardRowCreateLock.delete(lockKey);
-      }
-    },
-    [kfInstance, reloadDashboardData],
+    (project) => goPmNewTask(project),
+    [],
   );
 
   const handleCreateSubtaskForTask = useCallback(
-    async (taskRow) => {
-      const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-      if (!sdk) {
-        console.warn('Create subtask: Kissflow SDK not available');
-        return false;
-      }
-
-      const taskId = resolveTaskBusinessIdFromRow(taskRow);
-      if (!taskId) {
-        sdk?.client?.showInfo?.('Missing task id on this row (expected e.g. Task-PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `task-${taskRow?.id ?? taskId}`;
-      if (dashboardRowCreateLock.has(lockKey)) return false;
-
-      dashboardRowCreateLock.add(lockKey);
-      try {
-        const created = await createSubtaskInstance(sdk, taskId);
-        void openSubtaskDraft(sdk, created.instanceId, created.activityInstanceId)
-          .then(() => reloadDashboardData())
-          .catch((openError) => {
-            console.warn('Open subtask draft failed:', openError);
-            sdk?.client?.showInfo?.(openError?.message || 'Failed to open subtask form.');
-          });
-        return true;
-      } catch (error) {
-        console.warn('Create subtask failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create subtask.');
-        return false;
-      } finally {
-        dashboardRowCreateLock.delete(lockKey);
-      }
-    },
-    [kfInstance, reloadDashboardData],
+    (taskRow) => goPmNewSubtask(taskRow),
+    [],
   );
 
   /** Offset by sticky header height so section titles aren't hidden under the bar */
@@ -2844,7 +2749,10 @@ function DashboardPagePremium({ useLayout = true }) {
 
   const totalProjects = apiProjectData.length;
   const activeProjects = apiProjectData.filter((p) => p.status !== 'Completed').length;
-  const completedProjects = apiProjectData.filter((p) => p.status === 'Completed').length;
+  const completedProjects = apiProjectData.filter((p) => {
+    const s = String(p.status || '').trim().toLowerCase();
+    return s === 'completed' || s === 'closed' || s === 'done' || s.includes('complete');
+  }).length;
   const delayedProjects = apiProjectData.filter((p) => p.delayDays > 0 && p.status !== 'Completed').length;
   const totalSubtasks = apiSubtaskData.length;
   const openTasks = apiSubtaskData.filter((t) => t.status !== 'Completed').length;

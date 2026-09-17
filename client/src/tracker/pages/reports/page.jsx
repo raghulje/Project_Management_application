@@ -144,11 +144,6 @@ function KpiCard({ title, value, sub, tone, icon, index = 0, active = false, onC
       </div>
       <p className={`mt-2 text-2xl font-bold leading-none sm:text-3xl ${tone}`}>{value}</p>
       <p className="mt-1.5 text-[11px] font-medium text-slate-500 sm:text-xs">{sub}</p>
-      {onClick ? (
-        <p className="mt-1.5 text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100">
-          Click to view →
-        </p>
-      ) : null}
     </motion.button>
   )
 }

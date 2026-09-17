@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Modal from '../../../components/base/Modal';
 import Button from '../../../components/base/Button';
+import PtSelect from '../../../components/PtSelect.jsx';
 const ASSIGNEES = ['Arjun Mehta', 'Sneha Reddy', 'Deepak Verma', 'Priya Iyer', 'Aditya Kumar', 'Rahul Kapoor', 'Kavya Singh', 'Meera Pillai', 'Suresh Patel', 'Tarun Das'];
 function diffDays(start, end) {
     const s = new Date(start).getTime();
@@ -56,9 +57,12 @@ export default function AddTaskModal({ open, onClose, onAdd, projectId, projectN
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Assignee</label>
-          <select value={form.assignee} onChange={(e) => setForm({ ...form, assignee: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all">
-            {ASSIGNEES.map((a) => <option key={a}>{a}</option>)}
-          </select>
+          <PtSelect
+            value={form.assignee}
+            onChange={(e) => setForm({ ...form, assignee: e.target.value })}
+            className="w-full"
+            options={ASSIGNEES}
+          />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>

@@ -21,6 +21,13 @@ try {
 
 await seed()
 try {
+  const { disableAllNotifications } = await import('./services/notificationConfig.js')
+  await disableAllNotifications()
+  console.log('Notifications disabled')
+} catch (e) {
+  console.warn('Could not disable notifications:', e instanceof Error ? e.message : e)
+}
+try {
   const { ensureDefaultRoles } = await import('./services/permissions.js')
   await ensureDefaultRoles()
   console.log('Roles & permissions ready')

@@ -4,8 +4,6 @@ import { motion } from 'framer-motion';
 import AppLayout from './components/feature/AppLayout.jsx';
 import { KissflowSDKContext, kf } from './sdk/index.js';
 import {
-  createSubtaskInstance,
-  openSubtaskDraft,
   fetchAllSubtasks,
   filterSubtasksForTask,
 } from './lib/kfProjectTrackerKarthika.js';
@@ -32,7 +30,7 @@ import {
   compareDateValue,
 } from './components/TableColumnHeaders.jsx';
 import { TASKS_DASHBOARD_SATELLITE_OPTIONS } from './lib/kfSatelliteCreate.js';
-import { openPmRecord, scrollPmToElement } from './pmApi.js';
+import { goPmNewSubtask, openPmRecord, scrollPmToElement } from './pmApi.js';
 
 const PAGE_SIZE = 10;
 const IT_BUSINESS_FUNCTION = 'Information Technology';
@@ -470,11 +468,6 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, onC
             <p className={`mt-2 flex items-center gap-1 text-[11px] font-semibold sm:text-xs ${trend.positive ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
               <i className={`${trend.positive ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} text-xs`} />
               {trend.value}
-            </p>
-          ) : null}
-          {onClick ? (
-            <p className="mt-2 text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100">
-              Click to view →
             </p>
           ) : null}
         </div>
@@ -1250,12 +1243,14 @@ function TasksDashboardPremium({ useLayout = true, scopeToCurrentUser = false })
 
   const handleOpenTaskDetail = useCallback((row) => {
     if (!row) return false;
-    return openPmRecord('task', row);
+    setDetailModal({ type: 'task', row });
+    return true;
   }, []);
 
   const handleOpenSubtaskDetail = useCallback((row) => {
     if (!row) return false;
-    return openPmRecord('subtask', row);
+    setDetailModal({ type: 'subtask', row });
+    return true;
   }, []);
 
   const handleCloseDetailModal = useCallback(() => {
@@ -1272,37 +1267,14 @@ function TasksDashboardPremium({ useLayout = true, scopeToCurrentUser = false })
   }, [reloadData]);
 
   const handleCreateSubtask = useCallback(
-    async (taskRow) => {
+    (taskRow) => {
       if (isTaskCompleted(taskRow?.status)) {
-        const sdk = kfInstance ?? kf;
-        sdk?.client?.showInfo?.('Cannot add a subtask to a completed task.');
+        window.alert('Cannot add a subtask to a completed task.');
         return false;
       }
-
-      const sdk = kfInstance ?? kf;
-      if (!sdk) return false;
-      const taskId = resolveTaskBusinessIdFromRow(taskRow);
-      if (!taskId) {
-        sdk?.client?.showInfo?.('Missing task id on this row.');
-        return false;
-      }
-      const lockKey = `task-${taskRow?.id ?? taskId}`;
-      if (dashboardRowCreateLock.has(lockKey)) return false;
-      dashboardRowCreateLock.add(lockKey);
-      try {
-        const created = await createSubtaskInstance(sdk, taskId);
-        void openSubtaskDraft(sdk, created.instanceId, created.activityInstanceId)
-          .then(() => reloadData())
-          .catch((e) => console.warn('Open subtask draft failed:', e));
-        return true;
-      } catch (error) {
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create subtask.');
-        return false;
-      } finally {
-        dashboardRowCreateLock.delete(lockKey);
-      }
+      return goPmNewSubtask(taskRow);
     },
-    [kfInstance, reloadData],
+    [],
   );
 
   const healthInsightFilter =
@@ -1405,6 +1377,7 @@ function TasksDashboardPremium({ useLayout = true, scopeToCurrentUser = false })
         detail={detailModal}
         onClose={handleCloseDetailModal}
         viewerName={userName}
+        onOpenRecord={(row) => openPmRecord(detailModal?.type || 'task', row)}
       />
     </div>
   );

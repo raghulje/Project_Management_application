@@ -22,6 +22,8 @@ import { EmployeeDetail, EmployeeForm, EmployeeImport } from './pages/Employees'
 import { AdminHub, RolesEditor } from './pages/Admin'
 import { NotificationsSettings } from './pages/Notifications'
 import { EmailLogsPage } from './pages/EmailLogs'
+import { ApprovalsPage } from './pages/FieldAccess'
+import BoardPage from './pages/BoardPage'
 
 const ProjectDashboardPage = lazy(() => import('./tracker/ProjectDashboardPage.jsx'))
 const UserSpecificPT = lazy(() => import('./tracker/UserSpecificPT.jsx'))
@@ -114,10 +116,12 @@ export default function App() {
                   <Route path="/hub/projects" element={<Gate perm="projects.view"><Track><UserHubProjectsProject /></Track></Gate>} />
                   <Route path="/hub/tasks" element={<Gate perm="tasks.view"><Track><UserHubTasksProject /></Track></Gate>} />
                   <Route path="/hub/subtasks" element={<Gate perm="subtasks.view"><Track><UserHubSubTasksProject /></Track></Gate>} />
+                  <Route path="/approvals" element={<ApprovalsPage />} />
                   <Route path="/projects" element={<Gate perm="projects.view"><ProjectsList /></Gate>} />
                   <Route path="/projects/new" element={<Gate perm="projects.create"><ProjectForm /></Gate>} />
                   <Route path="/projects/:id" element={<Gate perm="projects.view"><ProjectDetail /></Gate>} />
                   <Route path="/projects/:id/edit" element={<Gate perm="projects.edit"><ProjectForm /></Gate>} />
+                  <Route path="/board" element={<Gate perm="tasks.view"><BoardPage /></Gate>} />
                   <Route path="/tasks" element={<Gate perm="tasks.view"><TasksList /></Gate>} />
                   <Route path="/tasks/new" element={<Gate perm="tasks.create"><TaskForm /></Gate>} />
                   <Route path="/tasks/:id" element={<Gate perm="tasks.view"><TaskDetail /></Gate>} />

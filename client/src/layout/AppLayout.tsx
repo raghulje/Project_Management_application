@@ -1,10 +1,12 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuth } from '../api/AuthContext'
+import { fieldAccessApi } from '../pages/FieldAccess'
+import { navState } from '../lib/recordNav'
 
 const SIDEBAR_KEY = 'pm_sidebar_collapsed'
 
-type Item = { to: string; label: string; icon: string; show?: boolean; end?: boolean }
+type Item = { to: string; label: string; icon: string; show?: boolean; end?: boolean; badge?: number }
 
 export default function AppLayout({ children, embed }: { children?: ReactNode; embed?: boolean }) {
   const { user, logout, isAdmin, isLeadership, isEmployee, roleName } = useAuth()
@@ -13,15 +15,22 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(SIDEBAR_KEY) === '1' } catch { return false }
   })
+  const [pendingApprovals, setPendingApprovals] = useState(0)
 
   useEffect(() => {
     try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0') } catch { /* ignore */ }
   }, [collapsed])
 
   useEffect(() => {
-    window.__pmNavigate = (path: string) => nav(path)
+    fieldAccessApi.count().then((r) => setPendingApprovals(Number(r.pending || 0))).catch(() => undefined)
+  }, [loc.pathname])
+
+  useEffect(() => {
+    window.__pmNavigate = (path: string) => {
+      nav(path, { state: navState(loc) })
+    }
     return () => { delete window.__pmNavigate }
-  }, [nav])
+  }, [nav, loc])
 
   const leadership = isAdmin || isLeadership
   const employeeOnly = isEmployee && !leadership
@@ -40,6 +49,10 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
         { to: '/hub/subtasks', label: 'Subtasks', icon: 'ri-list-check-3' },
       ]
     : []
+
+  const approvals: Item[] = [
+    { to: '/approvals', label: 'Approvals', icon: 'ri-shield-check-line', badge: pendingApprovals },
+  ]
 
   const admin: Item[] = isAdmin
     ? [
@@ -68,6 +81,7 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
     >
       <i className={i.icon} />
       <span>{i.label}</span>
+      {i.badge ? <em className="pm-nav-badge">{i.badge > 9 ? '9+' : i.badge}</em> : null}
     </NavLink>
   ))
 
@@ -76,10 +90,6 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
       <aside className="pm-side">
         <div className="pm-brand">
           <img className="pm-logo" src="/refexone-logo.png" alt="RefexOne" />
-          <div className="pm-brand-text">
-            <strong>Project Management</strong>
-            <em>Refex</em>
-          </div>
           <button
             type="button"
             className="pm-collapse"
@@ -93,6 +103,7 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
         <nav className="pm-navs">
           {work.length ? <><p>Workspace</p>{render(work)}</> : null}
           {hub.length ? <><p>My work</p>{render(hub)}</> : null}
+          <p>Requests</p>{render(approvals)}
           {admin.length ? <><p>Admin</p>{render(admin)}</> : null}
         </nav>
         <div className="pm-side-foot">

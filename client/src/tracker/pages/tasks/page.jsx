@@ -4,6 +4,7 @@ import Button from '../../components/base/Button';
 import Avatar from '../../components/base/Avatar';
 import { mockTasks } from '../../mocks/tasks';
 import AddTaskModal from './components/AddTaskModal';
+import PtSelect from '../../components/PtSelect.jsx';
 export default function TasksPage() {
     const [tasks, setTasks] = useState(mockTasks);
     const [addOpen, setAddOpen] = useState(false);
@@ -119,11 +120,17 @@ export default function TasksPage() {
                 : <span className="text-xs text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3.5">
-                    <select value={t.status} onChange={(e) => updateStatus(t.id, e.target.value)} className={`text-xs font-medium px-2 py-1 rounded-lg border cursor-pointer outline-none transition-all ${statusStyles[t.status]}`}>
-                      <option value="Pending">Pending</option>
-                      <option value="In Progress">In Progress</option>
-                      <option value="Completed">Completed</option>
-                    </select>
+                    <PtSelect
+                      value={t.status}
+                      onChange={(e) => updateStatus(t.id, e.target.value)}
+                      className="min-w-[8.5rem]"
+                      triggerClassName={`h-8 min-h-[32px] text-xs font-medium ${statusStyles[t.status] || ''}`}
+                      options={[
+                        { value: 'Pending', label: 'Pending' },
+                        { value: 'In Progress', label: 'In Progress' },
+                        { value: 'Completed', label: 'Completed' },
+                      ]}
+                    />
                   </td>
                   <td className="px-4 py-3.5">
                     {hovered === t.id && t.status !== 'Completed' && (<div className="flex items-center gap-1">

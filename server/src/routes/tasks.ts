@@ -4,6 +4,7 @@ import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
 import { attachRevisionCounts, diffRecords, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
 
 export const tasksRouter = Router()
 
@@ -18,7 +19,7 @@ const WRITE = [
   'created_by_name', 'created_by_email',
 ] as const
 
-function mapTask(row: Record<string, unknown>, extras: Record<string, unknown> = {}) {
+function mapTask(row: Record<string, unknown>, extras: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     ...row,
     requires_approval: Boolean(row.requires_approval),
@@ -82,7 +83,8 @@ tasksRouter.get('/:id', async (req, res) => {
     all(`SELECT * FROM subtasks WHERE task_id = ? AND deleted_at IS NULL ORDER BY id DESC`, [row.id]),
     listRevisions('task', Number(row.id)),
   ])
-  return okItem(res, mapTask(row, { subtasks, revisions, revision_count: revisions.length }))
+  const mapped = mapTask(row, { subtasks, revisions, revision_count: revisions.length })
+  return okItem(res, req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
 })
 
 function writeVals(body: Record<string, unknown>) {
@@ -98,7 +100,8 @@ function writeVals(body: Record<string, unknown>) {
 tasksRouter.post('/', async (req, res) => {
   const b = req.body || {}
   if (!b.name) return fail(res, 'name is required')
-  const { fields, vals } = writeVals(b)
+  const meta = await resolveAssignmentMeta('task', b)
+  const { fields, vals } = writeVals({ ...b, ...meta.extra })
   if (!fields.includes('name')) { fields.push('name'); vals.push(b.name) }
   const ts = now()
   const cols = [...fields, 'created_by_user_id', 'created_at', 'updated_at']
@@ -140,14 +143,27 @@ tasksRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const existing = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL`, [id])
   if (!existing) return fail(res, 'Task not found', 404)
-  const { fields, vals } = writeVals(req.body || {})
+  if (!req.user) return fail(res, 'Unauthorized', 401)
+  const filtered = await filterWritableUpdate({
+    user: req.user,
+    itemType: 'task',
+    existing,
+    body: req.body || {},
+    writeFields: WRITE,
+  })
+  if (!filtered.ok) return fail(res, filtered.message, filtered.status, filtered.payload)
+  if (filtered.unchanged) {
+    const mapped = mapTask(existing)
+    return okMessage(res, 'No changes', req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
+  }
+  const { fields, vals } = writeVals(filtered.body)
   if (!fields.length) return fail(res, 'No fields')
   await run(
     `UPDATE tasks SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
     [...vals, now(), id],
   )
   const after = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ?`, [id])
-  const changes = diffRecords(existing, after || {}, fields)
+  const changes = diffRecords(existing, after || {})
   await recordRevision({ itemType: 'task', itemId: id, user: req.user, changes })
   await logAction({ userId: req.user?.id, actionType: 'update', itemType: 'task', itemId: id, meta: { changes } })
   const row = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ?`, [id])
@@ -172,7 +188,7 @@ tasksRouter.put('/:id', async (req, res) => {
     taskId: id,
     taskCode: val(mapped, 'task_code'),
   })
-  return okMessage(res, 'Task updated', mapped)
+  return okMessage(res, 'Task updated', req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
 })
 
 tasksRouter.delete('/:id', async (req, res) => {

@@ -15,11 +15,8 @@ import {
   fetchAllSubtasks,
   filterSubtasksForTask,
   attachSubtaskCounts,
-  createSubtaskInstance,
-  createTaskInstance,
-  openSubtaskDraft,
-  openTaskDraft,
 } from '@/lib/kfProjectTrackerKarthika.js';
+import { goPm, goPmNewSubtask, goPmNewTask } from '@/pmApi.js';
 import { KissflowSDKContext } from '@/sdk/index.js';
 import { ProjectTrackerEmbedContext } from '@/contexts/ProjectTrackerEmbedContext.jsx';
 import PtSelect from '@/components/PtSelect.jsx';
@@ -155,61 +152,22 @@ function resolveRowTaskId(row) {
 
 const rowCreateLock = new Set();
 
-async function createTaskForProject(kfInstance, row, onPopupStateChange) {
-  const projectId = resolveRowProjectId(row);
-  if (!projectId) {
-    kfInstance?.client?.showInfo?.('Missing project id on this row (expected e.g. PRJ-...).');
-    return;
-  }
-  if (rowCreateLock.has(row.id)) return;
-
-  rowCreateLock.add(row.id);
-  try {
-    const created = await createTaskInstance(kfInstance, projectId);
-    onPopupStateChange?.(true);
-    await openTaskDraft(kfInstance, created.instanceId, created.activityInstanceId);
-  } catch (error) {
-    console.error('[New Task] Failed:', error);
-    onPopupStateChange?.(false);
-    kfInstance?.client?.showInfo?.(error?.message || 'Failed to create task.');
-  } finally {
-    rowCreateLock.delete(row.id);
-  }
+function createTaskForProject(kfInstance, row) {
+  goPmNewTask(row);
 }
 
-async function createSubtaskForTask(kfInstance, row, onPopupStateChange) {
-  const taskId = resolveRowTaskId(row);
-  if (!taskId) {
-    kfInstance?.client?.showInfo?.('Missing task id on this row (expected e.g. Task-PRJ-...).');
-    return;
-  }
-  if (rowCreateLock.has(row.id)) return;
-
-  rowCreateLock.add(row.id);
-  try {
-    const created = await createSubtaskInstance(kfInstance, taskId);
-    onPopupStateChange?.(true);
-    await openSubtaskDraft(kfInstance, created.instanceId, created.activityInstanceId);
-  } catch (error) {
-    console.error('[New Subtask] Failed:', error);
-    onPopupStateChange?.(false);
-    kfInstance?.client?.showInfo?.(error?.message || 'Failed to create subtask.');
-  } finally {
-    rowCreateLock.delete(row.id);
-  }
+function createSubtaskForTask(kfInstance, row) {
+  goPmNewSubtask(row);
 }
 
-async function handleAdd(kfInstance, row, rowType, onPopupStateChange) {
-  if (!kfInstance || rowType === 'subtask') return;
-
+function handleAdd(row, rowType) {
+  if (rowType === 'subtask') return;
   if (rowType === 'project') {
-    await createTaskForProject(kfInstance, row, onPopupStateChange);
+    createTaskForProject(null, row);
     return;
   }
-
   if (rowType === 'task') {
-    await createSubtaskForTask(kfInstance, row, onPopupStateChange);
-    return;
+    createSubtaskForTask(null, row);
   }
 }
 
@@ -321,18 +279,8 @@ function Row({
     }
   }
 
-  async function handleAddClick() {
-    if (isProject || isTask) {
-      if (isCreating || rowCreateLock.has(node.id)) return;
-      setIsCreating(true);
-      try {
-        await handleAdd(kfInstance, node, node.type, onPopupStateChange);
-      } finally {
-        setIsCreating(false);
-      }
-      return;
-    }
-    handleAdd(kfInstance, node, node.type, onPopupStateChange);
+  function handleAddClick() {
+    handleAdd(node, node.type);
   }
 
   const items = childState?.items || [];
@@ -677,12 +625,11 @@ export default function ProjectTrackerKarthikaPage({ useLayout: useLayoutProp = 
   }
 
   function handleNewItemClick(isProjectTab) {
-    if (!kfInstance) return;
     if (isProjectTab) {
-      openKfPopup(kfInstance, NEW_PROJECT_POPUP_ID, {}, setPopupOpen);
+      goPm('/projects/new');
       return;
     }
-    openKfPopup(kfInstance, NEW_TASK_POPUP_ID, {}, setPopupOpen);
+    goPm('/tasks/new');
   }
 
   const isProjectTab = tab === 'project';
@@ -720,7 +667,6 @@ export default function ProjectTrackerKarthikaPage({ useLayout: useLayoutProp = 
             type="button"
             className={styles.newBtn}
             onClick={() => handleNewItemClick(isProjectTab)}
-            disabled={!sdkReady}
           >
             <Plus size={18} />
             {isProjectTab ? 'New project' : 'New task'}

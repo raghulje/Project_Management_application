@@ -1,44 +1,111 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { projectsApi, subtasksApi, tasksApi } from '../api/client'
 import ResourceTable from '../components/ResourceTable'
-import { Field, PRIORITY_OPTS, STATUS_OPTS, Section, dateInput } from './RecordUi'
-import { FormShell, Kv, MetaBlock, PersonChip, Rag, RecordHero, RevBadge, RevisionLog, StatusPill, Tabs, fmt } from './WorkspaceKit'
+import { RevisionLog, StatusPill, fmt } from './WorkspaceKit'
 import KanbanBoard from './KanbanBoard'
+import { useAuth } from '../api/AuthContext'
+import { crumbState, navState, pageCrumbs, smartBack } from '../lib/recordNav'
+import { FrAcc, FrGrid, FrHeader, FrPage, FrSection, FrValue } from './FormReference'
 
+function RelatedTable({
+  rows,
+  columns,
+  empty,
+}: {
+  rows: Record<string, unknown>[]
+  columns: { key: string; label: string; href?: (r: Record<string, unknown>) => string }[]
+  empty: string
+}) {
+  const loc = useLocation()
+  const from = navState(loc)
+  return (
+    <div className="fr-table-wrap">
+      <table className="fr-table">
+        <thead>
+          <tr>{columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr><td colSpan={columns.length} className="fr-empty">{empty}</td></tr>
+          ) : rows.map((r) => (
+            <tr key={String(r.id)}>
+              {columns.map((c) => {
+                const href = c.href?.(r)
+                const val = c.key === 'status' ? <StatusPill value={r[c.key]} /> : fmt(r[c.key])
+                return <td key={c.key}>{href ? <Link to={href} state={from}>{val}</Link> : val}</td>
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export function ProjectsList() {
+  const loc = useLocation()
+  const [params] = useSearchParams()
   const [q, setQ] = useState('')
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [total, setTotal] = useState(0)
+  const view = params.get('view') === 'board' ? 'board' : 'list'
+  const hereState = navState(loc)
   async function load() {
     const r = await projectsApi.list({ search: q, limit: 200 })
     setRows(r.rows); setTotal(r.total)
   }
   useEffect(() => { void load() }, [q])
+  const extra = view === 'board'
+    ? <Link className="ws-btn ghost" to="/projects"><i className="ri-list-check-2" />List</Link>
+    : <Link className="ws-btn ghost" to="/projects?view=board"><i className="ri-kanban-view" />Board</Link>
+  if (view === 'board') {
+    return (
+      <FrPage fill>
+        <FrHeader
+          crumbs={[{ to: '/projects', label: 'Projects' }, { label: 'Board' }]}
+          title="Projects"
+          count={`${total} total records`}
+        >
+          <input className="fr-search" placeholder="Search records..." value={q} onChange={(e) => setQ(e.target.value)} />
+          {extra}
+          <Link className="ws-btn" to="/projects/new" state={hereState}><i className="ri-add-line" />Create</Link>
+        </FrHeader>
+        <KanbanBoard
+          items={rows}
+          filterKey={q}
+          hrefFor={(r) => `/projects/${r.id}`}
+          onMove={(row, status) => projectsApi.update(String(row.id), { status })}
+          onChanged={() => void load()}
+        />
+      </FrPage>
+    )
+  }
   return (
     <ResourceTable
       title="Projects"
-      subtitle={`${total} records`}
+      subtitle={`${total} total records`}
       createTo="/projects/new"
-      createLabel="New project"
-      extra={<Link className="ws-btn ghost" to="/board"><i className="ri-kanban-view" />Board</Link>}
+      createLabel="Create"
+      extra={extra}
       rows={rows}
       total={total}
       search={q}
       onSearch={setQ}
+      defaultSort={{ key: 'kissflow_id', order: 'asc' }}
       onDeleteMany={async (ids) => {
         await Promise.all(ids.map((id) => projectsApi.remove(id)))
         await load()
       }}
       columns={[
-        { key: 'kissflow_id', label: 'ID', href: (r) => `/projects/${r.id}` },
-        { key: 'name', label: 'Name', href: (r) => `/projects/${r.id}` },
+        { key: 'name', label: 'Project Name', kind: 'name', subKey: 'kissflow_id', href: (r) => `/projects/${r.id}` },
+        { key: 'project_owner_name', label: 'Owner', kind: 'person' },
+        { key: 'start_date', label: 'Start Date', kind: 'date' },
+        { key: 'end_date', label: 'End Date', kind: 'date' },
+        { key: 'revision_count', label: 'Revised', kind: 'revisions' },
+        { key: 'completion', label: 'Progress', kind: 'progress' },
+        { key: 'rag', label: 'RAG Status', kind: 'rag' },
         { key: 'status', label: 'Status' },
-        { key: 'rag', label: 'RAG' },
-        { key: 'project_owner_name', label: 'Owner' },
-        { key: 'end_date', label: 'End' },
-        { key: 'revision_count', label: 'Revisions', kind: 'revisions' },
       ]}
     />
   )
@@ -47,9 +114,10 @@ export function ProjectsList() {
 export function ProjectDetail() {
   const { id } = useParams()
   const nav = useNavigate()
+  const loc = useLocation()
+  const { isEmployee } = useAuth()
   const [row, setRow] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState('overview')
   async function load() {
     if (!id) return
     try { setRow(await projectsApi.get(id)) } catch (e) { setErr(e instanceof Error ? e.message : 'Failed to load') }
@@ -59,145 +127,112 @@ export function ProjectDetail() {
   if (!row) return <p>Loading…</p>
   const recordId = String(row.id)
   const tasks = (row.tasks as Record<string, unknown>[] | undefined) || []
-  const counts = (row.task_counts as { open_tasks?: number; done_tasks?: number } | undefined) || {}
-  const done = Number(counts.done_tasks || 0)
-  const open = Number(counts.open_tasks || 0)
-  const total = done + open || tasks.length
-  const pct = total ? Math.round((done / total) * 100) : 0
+  const trail = smartBack({ loc, kind: 'project', isEmployee })
+  const hereState = navState(loc)
+  const revs = (row.revisions as Record<string, unknown>[]) || []
+  const crumbs = pageCrumbs({ loc, kind: 'project', isEmployee, current: String(row.name) })
 
   return (
-    <div className="ws">
-      <RecordHero
-        backTo="/projects"
-        backLabel="All projects"
-        kicker="Project"
-        code={String(row.project_code || row.kissflow_id || '')}
+    <FrPage>
+      <FrHeader
+        crumbs={crumbs}
         title={String(row.name)}
-        subtitle={[row.company_name, row.category, row.project_type].filter(Boolean).map(String).join(' · ')}
-        people={(
-          <>
-            <PersonChip label="Owner" name={row.project_owner_name} />
-            <PersonChip label="PM" name={row.project_manager_name} />
-            <PersonChip label="Sponsor" name={row.sponsor_name} />
-            <PersonChip label="Requester" name={row.requester_name} />
-          </>
-        )}
-        actions={(
-          <>
-            <Link className="ws-btn" to={`/tasks/new?project_id=${recordId}`}><i className="ri-add-line" />New task</Link>
-            <Link className="ws-btn ghost" to={`/projects/${recordId}/edit`}><i className="ri-pencil-line" />Edit</Link>
-            <button className="ws-btn danger" type="button" onClick={async () => {
-              if (!confirm('Delete this project?')) return
-              await projectsApi.remove(recordId)
-              nav('/projects')
-            }}><i className="ri-delete-bin-line" />Delete</button>
-          </>
-        )}
-        metrics={[
-          { label: 'Status', value: <StatusPill value={row.status} />, icon: 'ri-flag-line' },
-          { label: 'RAG', value: <Rag value={row.rag} />, icon: 'ri-pulse-line' },
-          { label: 'Owner', value: fmt(row.project_owner_name), icon: 'ri-user-star-line' },
-          { label: 'End date', value: fmt(row.end_date), icon: 'ri-calendar-line' },
-          { label: 'Revisions', value: <RevBadge count={row.revision_count} />, icon: 'ri-history-line' },
-        ]}
-        progress={{ label: `${done} of ${total || 0} tasks complete`, pct }}
-      />
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'board', label: `Board (${tasks.length})` },
-          { id: 'tasks', label: 'Task list' },
-          { id: 'revisions', label: `Revisions (${Number(row.revision_count || (row.revisions as unknown[] | undefined)?.length || 0)})` },
-        ]}
-      />
-      {tab === 'overview' ? (
-        <div className="ws-panel">
-          <MetaBlock title="Identity">
-            <Kv label="Kissflow id">{fmt(row.kissflow_id)}</Kv>
-            <Kv label="Project code">{fmt(row.project_code)}</Kv>
-            <Kv label="Company">{fmt(row.company_name)}</Kv>
-            <Kv label="Project type">{fmt(row.project_type)}</Kv>
-            <Kv label="Functions">{fmt(row.function_type)}</Kv>
-            <Kv label="Category">{fmt(row.category)}</Kv>
-            <Kv label="Request">{fmt(row.project_request)}</Kv>
-            <Kv label="Priority">{fmt(row.priority)}</Kv>
-          </MetaBlock>
-          <MetaBlock title="Schedule">
-            <Kv label="Start">{fmt(row.start_date)}</Kv>
-            <Kv label="End / due">{fmt(row.end_date)}</Kv>
-            <Kv label="Governance">{fmt(row.governance_frequency)}</Kv>
-            <Kv label="Risk">{fmt(row.risk)}</Kv>
-            <Kv label="Risk mitigation">{fmt(row.risk_mitigation_details)}</Kv>
-            <Kv label="TCO / Efforts">{fmt(row.tco_efforts)}</Kv>
-          </MetaBlock>
-          <MetaBlock title="Organization">
-            <Kv label="Entity">{fmt(row.entity)}</Kv>
-            <Kv label="Business">{fmt(row.business)}</Kv>
-            <Kv label="Vendor">{fmt(row.vendor_name)}</Kv>
-            <Kv label="Tech stack">{fmt(row.tech_stack)}</Kv>
-          </MetaBlock>
-          <MetaBlock title="Documents & integrations">
-            <Kv label="CB analysis">{fmt(row.cb_analysis_available)}</Kv>
-            <Kv label="AI usage">{fmt(row.ai_usage)}</Kv>
-            <Kv label="AI details">{fmt(row.ai_details)}</Kv>
-            <Kv label="BRD">{fmt(row.brd_available)}</Kv>
-            <Kv label="Process document">{fmt(row.process_document)}</Kv>
-            <Kv label="Support document">{fmt(row.support_available)}</Kv>
-            <Kv label="Reports">{fmt(row.reports_available)}</Kv>
-            <Kv label="Tally">{fmt(row.integrated_with_tally)}</Kv>
-            <Kv label="SAP">{fmt(row.integrated_with_sap)}</Kv>
-            <Kv label="Power BI">{fmt(row.integrated_with_power_bi)}</Kv>
-          </MetaBlock>
-          <MetaBlock title="People">
-            <Kv label="Assignee">{fmt(row.assignee_name)}</Kv>
-            <Kv label="Requester">{fmt(row.requester_name)}</Kv>
-            <Kv label="Business owner">{fmt(row.business_owner_name)}</Kv>
-            <Kv label="Sponsor">{fmt(row.sponsor_name)}</Kv>
-            <Kv label="Project owner">{fmt(row.project_owner_name)}</Kv>
-            <Kv label="Project manager">{fmt(row.project_manager_name)}</Kv>
-            <Kv label="COS owner">{fmt(row.cos_owner_name)}</Kv>
-            <Kv label="Developer">{fmt(row.developer_name)}</Kv>
-          </MetaBlock>
-          {row.objectives ? (
-            <div className="ws-block">
-              <h3>Objectives</h3>
-              <p className="ws-sub">{String(row.objectives)}</p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {tab === 'board' ? (
-        <div className="ws-panel" style={{ padding: 14 }}>
+        badge={fmt(row.status)}
+      >
+        <Link className="ws-btn" to={`/tasks/new?project_id=${recordId}`} state={hereState}><i className="ri-add-line" />New task</Link>
+        <Link className="ws-btn ghost" to={`/projects/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
+        <button className="ws-btn danger" type="button" onClick={async () => {
+          if (!confirm('Delete this project?')) return
+          await projectsApi.remove(recordId)
+          nav(trail.backTo, { state: trail.backState })
+        }}><i className="ri-delete-bin-line" />Delete</button>
+      </FrHeader>
+      <FrAcc>
+        <FrSection label="Overview">
+          <FrGrid>
+            <FrValue label="Kissflow id">{fmt(row.kissflow_id)}</FrValue>
+            <FrValue label="Project code">{fmt(row.project_code)}</FrValue>
+            <FrValue label="Company">{fmt(row.company_name)}</FrValue>
+            <FrValue label="Project type">{fmt(row.project_type)}</FrValue>
+            <FrValue label="Functions">{fmt(row.function_type)}</FrValue>
+            <FrValue label="Category">{fmt(row.category)}</FrValue>
+            <FrValue label="Request">{fmt(row.project_request)}</FrValue>
+            <FrValue label="Priority">{fmt(row.priority)}</FrValue>
+            <FrValue label="Start">{fmt(row.start_date)}</FrValue>
+            <FrValue label="End / due">{fmt(row.end_date)}</FrValue>
+            <FrValue label="Governance">{fmt(row.governance_frequency)}</FrValue>
+            <FrValue label="RAG">{fmt(row.rag)}</FrValue>
+            <FrValue label="Risk">{fmt(row.risk)}</FrValue>
+            <FrValue label="TCO / Efforts">{fmt(row.tco_efforts)}</FrValue>
+            <FrValue label="Risk mitigation" span={4}>{fmt(row.risk_mitigation_details)}</FrValue>
+            <FrValue label="Objectives" span={4}>{fmt(row.objectives)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="People">
+          <FrGrid>
+            <FrValue label="Assignee">{fmt(row.assignee_name)}</FrValue>
+            <FrValue label="Requester">{fmt(row.requester_name)}</FrValue>
+            <FrValue label="Business owner">{fmt(row.business_owner_name)}</FrValue>
+            <FrValue label="Sponsor">{fmt(row.sponsor_name)}</FrValue>
+            <FrValue label="Project owner">{fmt(row.project_owner_name)}</FrValue>
+            <FrValue label="Project manager">{fmt(row.project_manager_name)}</FrValue>
+            <FrValue label="COS owner">{fmt(row.cos_owner_name)}</FrValue>
+            <FrValue label="Developer">{fmt(row.developer_name)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="Organization">
+          <FrGrid>
+            <FrValue label="Entity">{fmt(row.entity)}</FrValue>
+            <FrValue label="Business">{fmt(row.business)}</FrValue>
+            <FrValue label="Vendor">{fmt(row.vendor_name)}</FrValue>
+            <FrValue label="Tech stack">{fmt(row.tech_stack)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="Documents & integrations">
+          <FrGrid>
+            <FrValue label="CB analysis">{fmt(row.cb_analysis_available)}</FrValue>
+            <FrValue label="AI usage">{fmt(row.ai_usage)}</FrValue>
+            <FrValue label="BRD">{fmt(row.brd_available)}</FrValue>
+            <FrValue label="Process document">{fmt(row.process_document)}</FrValue>
+            <FrValue label="Support document">{fmt(row.support_available)}</FrValue>
+            <FrValue label="Reports">{fmt(row.reports_available)}</FrValue>
+            <FrValue label="Tally">{fmt(row.integrated_with_tally)}</FrValue>
+            <FrValue label="SAP">{fmt(row.integrated_with_sap)}</FrValue>
+            <FrValue label="Power BI">{fmt(row.integrated_with_power_bi)}</FrValue>
+            <FrValue label="AI details" span={4}>{fmt(row.ai_details)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="Tasks" count={tasks.length}>
+          <div className="fr-sec-tools">
+            <Link className="ws-btn ghost" to={`/tasks/new?project_id=${recordId}`} state={hereState}><i className="ri-add-line" />Create</Link>
+          </div>
+          <RelatedTable
+            rows={tasks}
+            empty="No tasks yet. Create one to start the board."
+            columns={[
+              { key: 'name', label: 'Name', href: (t) => `/tasks/${t.id}` },
+              { key: 'task_code', label: 'Code' },
+              { key: 'assigned_to_name', label: 'Assignee' },
+              { key: 'status', label: 'Status' },
+              { key: 'end_date', label: 'End' },
+            ]}
+          />
+        </FrSection>
+        <FrSection label="Board" count={tasks.length}>
           <KanbanBoard items={tasks} onChanged={() => void load()} />
-        </div>
-      ) : null}
-      {tab === 'tasks' ? (
-        <div className="ws-panel" style={{ padding: 14 }}>
-          {tasks.length === 0 ? <div className="ws-empty">No tasks yet. Create one to start the board.</div> : tasks.map((t) => (
-            <Link key={String(t.id)} className="ws-item" to={`/tasks/${t.id}`}>
-              <div>
-                <b>{String(t.name)}</b>
-                <p className="ws-sub">{String(t.task_code || '')} · {fmt(t.assigned_to_name)}</p>
-              </div>
-              <StatusPill value={t.status} />
-            </Link>
-          ))}
-        </div>
-      ) : null}
-      {tab === 'revisions' ? (
-        <div className="ws-panel" style={{ padding: 18 }}>
-          <RevisionLog rows={(row.revisions as Record<string, unknown>[]) || []} />
-        </div>
-      ) : null}
-    </div>
+        </FrSection>
+        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+          <RevisionLog rows={revs} />
+        </FrSection>
+      </FrAcc>
+    </FrPage>
   )
 }
 
 export { default as ProjectForm } from './ProjectComposer'
 
 export function TasksList() {
+  const loc = useLocation()
   const [params] = useSearchParams()
   const [q, setQ] = useState('')
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
@@ -210,10 +245,10 @@ export function TasksList() {
   return (
     <ResourceTable
       title="Tasks"
-      subtitle={`${total} records`}
+      subtitle={`${total} total records`}
       createTo="/tasks/new"
-      createLabel="New task"
-      extra={<Link className="ws-btn ghost" to="/board"><i className="ri-kanban-view" />Board</Link>}
+      createLabel="Create"
+      extra={<Link className="ws-btn ghost" to="/board" state={navState(loc)}><i className="ri-kanban-view" />Board</Link>}
       rows={rows}
       total={total}
       search={q}
@@ -223,13 +258,13 @@ export function TasksList() {
         await load()
       }}
       columns={[
-        { key: 'task_code', label: 'Code', href: (r) => `/tasks/${r.id}` },
-        { key: 'name', label: 'Name', href: (r) => `/tasks/${r.id}` },
+        { key: 'name', label: 'Task Name', kind: 'name', subKey: 'task_code', href: (r) => `/tasks/${r.id}` },
         { key: 'project_name', label: 'Project', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
+        { key: 'assigned_to_name', label: 'Assigned To', kind: 'person' },
+        { key: 'start_date', label: 'Start Date', kind: 'date' },
+        { key: 'end_date', label: 'End Date', kind: 'date' },
+        { key: 'revision_count', label: 'Revised', kind: 'revisions' },
         { key: 'status', label: 'Status' },
-        { key: 'assigned_to_name', label: 'Assignee' },
-        { key: 'end_date', label: 'End' },
-        { key: 'revision_count', label: 'Revisions', kind: 'revisions' },
       ]}
     />
   )
@@ -238,9 +273,10 @@ export function TasksList() {
 export function TaskDetail() {
   const { id } = useParams()
   const nav = useNavigate()
+  const loc = useLocation()
+  const { isEmployee } = useAuth()
   const [row, setRow] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState('overview')
   useEffect(() => {
     if (!id) return
     tasksApi.get(id).then(setRow).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load'))
@@ -249,79 +285,74 @@ export function TaskDetail() {
   if (!row) return <p>Loading…</p>
   const recordId = String(row.id)
   const subs = (row.subtasks as Record<string, unknown>[] | undefined) || []
+  const parent = row.project_id
+    ? { to: `/projects/${row.project_id}?tab=tasks`, label: String(row.project_name || 'Project') }
+    : null
+  const trail = smartBack({ loc, kind: 'task', isEmployee, parent })
+  const hereState = navState(loc)
+  const revs = (row.revisions as Record<string, unknown>[]) || []
+  const crumbs = pageCrumbs({
+    loc,
+    kind: 'task',
+    isEmployee,
+    current: String(row.name),
+    parents: [parent],
+  })
+
   return (
-    <div className="ws">
-      <RecordHero
-        backTo={row.project_id ? `/projects/${row.project_id}` : '/tasks'}
-        backLabel={row.project_name ? String(row.project_name) : 'All tasks'}
-        kicker="Task"
-        code={String(row.task_code || '')}
+    <FrPage>
+      <FrHeader
+        crumbs={crumbs}
         title={String(row.name)}
-        subtitle={row.detail ? String(row.detail) : undefined}
-        people={<PersonChip label="Assignee" name={row.assigned_to_name} />}
-        actions={(
-          <>
-            <Link className="ws-btn" to={`/subtasks/new?task_id=${recordId}`}><i className="ri-add-line" />New subtask</Link>
-            <Link className="ws-btn ghost" to={`/tasks/${recordId}/edit`}><i className="ri-pencil-line" />Edit</Link>
-            <button className="ws-btn danger" type="button" onClick={async () => {
-              if (!confirm('Delete this task?')) return
-              await tasksApi.remove(recordId)
-              nav('/tasks')
-            }}><i className="ri-delete-bin-line" />Delete</button>
-          </>
-        )}
-        metrics={[
-          { label: 'Status', value: <StatusPill value={row.status} />, icon: 'ri-checkbox-circle-line' },
-          { label: 'Priority', value: <StatusPill value={row.priority} />, icon: 'ri-flashlight-line' },
-          { label: 'Assignee', value: fmt(row.assigned_to_name), icon: 'ri-user-line' },
-          { label: 'End date', value: fmt(row.end_date), icon: 'ri-calendar-check-line' },
-          { label: 'Revisions', value: <RevBadge count={row.revision_count} />, icon: 'ri-history-line' },
-        ]}
-      />
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'subtasks', label: `Subtasks (${subs.length})` },
-          { id: 'revisions', label: `Revisions (${Number(row.revision_count || (row.revisions as unknown[] | undefined)?.length || 0)})` },
-        ]}
-      />
-      {tab === 'overview' ? (
-        <div className="ws-panel">
-          <MetaBlock title="Work">
-            <Kv label="Task code">{fmt(row.task_code)}</Kv>
-            <Kv label="Project">{row.project_id ? <Link to={`/projects/${row.project_id}`}>{fmt(row.project_name)}</Link> : fmt(row.project_name)}</Kv>
-            <Kv label="Type">{fmt(row.task_type)}</Kv>
-            <Kv label="Entity">{fmt(row.entity)}</Kv>
-          </MetaBlock>
-          <MetaBlock title="Schedule">
-            <Kv label="Start">{fmt(row.start_date)}</Kv>
-            <Kv label="End">{fmt(row.end_date)}</Kv>
-            <Kv label="Status">{fmt(row.status)}</Kv>
-            <Kv label="Priority">{fmt(row.priority)}</Kv>
-          </MetaBlock>
-        </div>
-      ) : null}
-      {tab === 'subtasks' ? (
-        <div className="ws-panel" style={{ padding: 14 }}>
-          {subs.length === 0 ? <div className="ws-empty">No subtasks yet.</div> : subs.map((s) => (
-            <Link key={String(s.id)} className="ws-item" to={`/subtasks/${s.id}`}>
-              <div>
-                <b>{String(s.name)}</b>
-                <p className="ws-sub">{fmt(s.assigned_to_name)}</p>
-              </div>
-              <StatusPill value={s.status} />
-            </Link>
-          ))}
-        </div>
-      ) : null}
-      {tab === 'revisions' ? (
-        <div className="ws-panel" style={{ padding: 18 }}>
-          <RevisionLog rows={(row.revisions as Record<string, unknown>[]) || []} />
-        </div>
-      ) : null}
-    </div>
+        badge={fmt(row.status)}
+      >
+        <Link className="ws-btn" to={`/subtasks/new?task_id=${recordId}`} state={hereState}><i className="ri-add-line" />New subtask</Link>
+        <Link className="ws-btn ghost" to={`/tasks/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
+        <button className="ws-btn danger" type="button" onClick={async () => {
+          if (!confirm('Delete this task?')) return
+          await tasksApi.remove(recordId)
+          nav(trail.backTo, { state: trail.backState })
+        }}><i className="ri-delete-bin-line" />Delete</button>
+      </FrHeader>
+      <FrAcc>
+        <FrSection label="Overview">
+          <FrGrid>
+            <FrValue label="Task code">{fmt(row.task_code)}</FrValue>
+            <FrValue label="Project">
+              {row.project_id
+                ? <Link to={`/projects/${row.project_id}?tab=tasks`} state={crumbState(loc, `/projects/${row.project_id}?tab=tasks`)}>{fmt(row.project_name)}</Link>
+                : fmt(row.project_name)}
+            </FrValue>
+            <FrValue label="Type">{fmt(row.task_type)}</FrValue>
+            <FrValue label="Entity">{fmt(row.entity)}</FrValue>
+            <FrValue label="Start">{fmt(row.start_date)}</FrValue>
+            <FrValue label="End">{fmt(row.end_date)}</FrValue>
+            <FrValue label="Status">{fmt(row.status)}</FrValue>
+            <FrValue label="Priority">{fmt(row.priority)}</FrValue>
+            <FrValue label="Assignee">{fmt(row.assigned_to_name)}</FrValue>
+            <FrValue label="Detail" span={4}>{fmt(row.detail)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="Subtasks" count={subs.length}>
+          <div className="fr-sec-tools">
+            <Link className="ws-btn ghost" to={`/subtasks/new?task_id=${recordId}`} state={hereState}><i className="ri-add-line" />Create</Link>
+          </div>
+          <RelatedTable
+            rows={subs}
+            empty="No subtasks yet."
+            columns={[
+              { key: 'name', label: 'Name', href: (s) => `/subtasks/${s.id}` },
+              { key: 'assigned_to_name', label: 'Assignee' },
+              { key: 'status', label: 'Status' },
+              { key: 'end_date', label: 'End' },
+            ]}
+          />
+        </FrSection>
+        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+          <RevisionLog rows={revs} />
+        </FrSection>
+      </FrAcc>
+    </FrPage>
   )
 }
 
@@ -339,9 +370,9 @@ export function SubtasksList() {
   return (
     <ResourceTable
       title="Subtasks"
-      subtitle={`${total} records`}
+      subtitle={`${total} total records`}
       createTo="/subtasks/new"
-      createLabel="New subtask"
+      createLabel="Create"
       rows={rows}
       total={total}
       search={q}
@@ -351,12 +382,14 @@ export function SubtasksList() {
         await load()
       }}
       columns={[
-        { key: 'name', label: 'Name', href: (r) => `/subtasks/${r.id}` },
-        { key: 'task_name', label: 'Task' },
-        { key: 'project_name', label: 'Project' },
+        { key: 'name', label: 'Subtask Name', kind: 'name', href: (r) => `/subtasks/${r.id}` },
+        { key: 'task_name', label: 'Task', href: (r) => r.task_id ? `/tasks/${r.task_id}` : '/tasks' },
+        { key: 'project_name', label: 'Project', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
+        { key: 'assigned_to_name', label: 'Assigned To', kind: 'person' },
+        { key: 'start_date', label: 'Start Date', kind: 'date' },
+        { key: 'end_date', label: 'End Date', kind: 'date' },
+        { key: 'revision_count', label: 'Revised', kind: 'revisions' },
         { key: 'status', label: 'Status' },
-        { key: 'assigned_to_name', label: 'Assignee' },
-        { key: 'revision_count', label: 'Revisions', kind: 'revisions' },
       ]}
     />
   )
@@ -365,9 +398,10 @@ export function SubtasksList() {
 export function SubtaskDetail() {
   const { id } = useParams()
   const nav = useNavigate()
+  const loc = useLocation()
+  const { isEmployee } = useAuth()
   const [row, setRow] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
-  const [tab, setTab] = useState('overview')
   useEffect(() => {
     if (!id) return
     subtasksApi.get(id).then(setRow).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load'))
@@ -375,128 +409,69 @@ export function SubtaskDetail() {
   if (err) return <p className="muted">{err}</p>
   if (!row) return <p>Loading…</p>
   const recordId = String(row.id)
+  const parent = row.task_id
+    ? { to: `/tasks/${row.task_id}?tab=subtasks`, label: String(row.task_name || 'Task') }
+    : null
+  const trail = smartBack({ loc, kind: 'subtask', isEmployee, parent })
+  const hereState = navState(loc)
+  const revs = (row.revisions as Record<string, unknown>[]) || []
+  const crumbs = pageCrumbs({
+    loc,
+    kind: 'subtask',
+    isEmployee,
+    current: String(row.name),
+    parents: [
+      row.project_id
+        ? { to: `/projects/${row.project_id}?tab=tasks`, label: String(row.project_name || 'Project') }
+        : null,
+      parent,
+    ],
+  })
+
   return (
-    <div className="ws">
-      <RecordHero
-        backTo={row.task_id ? `/tasks/${row.task_id}` : '/subtasks'}
-        backLabel={row.task_name ? String(row.task_name) : 'All subtasks'}
-        kicker="Subtask"
+    <FrPage>
+      <FrHeader
+        crumbs={crumbs}
         title={String(row.name)}
-        subtitle={[row.project_name, row.summary].filter(Boolean).map(String).join(' · ')}
-        people={<PersonChip label="Assignee" name={row.assigned_to_name} />}
-        actions={(
-          <>
-            <Link className="ws-btn ghost" to={`/subtasks/${recordId}/edit`}><i className="ri-pencil-line" />Edit</Link>
-            <button className="ws-btn danger" type="button" onClick={async () => {
-              if (!confirm('Delete this subtask?')) return
-              await subtasksApi.remove(recordId)
-              nav('/subtasks')
-            }}><i className="ri-delete-bin-line" />Delete</button>
-          </>
-        )}
-        metrics={[
-          { label: 'Status', value: <StatusPill value={row.status} />, icon: 'ri-node-tree' },
-          { label: 'Priority', value: <StatusPill value={row.priority} />, icon: 'ri-flashlight-line' },
-          { label: 'Assignee', value: fmt(row.assigned_to_name), icon: 'ri-user-line' },
-          { label: 'End date', value: fmt(row.end_date), icon: 'ri-calendar-line' },
-          { label: 'Revisions', value: <RevBadge count={row.revision_count} />, icon: 'ri-history-line' },
-        ]}
-      />
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'revisions', label: `Revisions (${Number(row.revision_count || (row.revisions as unknown[] | undefined)?.length || 0)})` },
-        ]}
-      />
-      {tab === 'overview' ? (
-        <div className="ws-panel">
-          <MetaBlock title="Context">
-            <Kv label="Parent task">{row.task_id ? <Link to={`/tasks/${row.task_id}`}>{fmt(row.task_name)}</Link> : fmt(row.task_name)}</Kv>
-            <Kv label="Project">{row.project_id ? <Link to={`/projects/${row.project_id}`}>{fmt(row.project_name)}</Link> : fmt(row.project_name)}</Kv>
-            <Kv label="Start">{fmt(row.start_date)}</Kv>
-            <Kv label="End">{fmt(row.end_date)}</Kv>
-          </MetaBlock>
-        </div>
-      ) : (
-        <div className="ws-panel" style={{ padding: 18 }}>
-          <RevisionLog rows={(row.revisions as Record<string, unknown>[]) || []} />
-        </div>
-      )}
-    </div>
+        badge={fmt(row.status)}
+      >
+        <Link className="ws-btn ghost" to={`/subtasks/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
+        <button className="ws-btn danger" type="button" onClick={async () => {
+          if (!confirm('Delete this subtask?')) return
+          await subtasksApi.remove(recordId)
+          nav(trail.backTo, { state: trail.backState })
+        }}><i className="ri-delete-bin-line" />Delete</button>
+      </FrHeader>
+      <FrAcc>
+        <FrSection label="Overview">
+          <FrGrid>
+            <FrValue label="Parent task">
+              {row.task_id
+                ? <Link to={`/tasks/${row.task_id}?tab=subtasks`} state={crumbState(loc, `/tasks/${row.task_id}?tab=subtasks`)}>{fmt(row.task_name)}</Link>
+                : fmt(row.task_name)}
+            </FrValue>
+            <FrValue label="Project">
+              {row.project_id
+                ? <Link to={`/projects/${row.project_id}?tab=tasks`} state={crumbState(loc, `/projects/${row.project_id}?tab=tasks`)}>{fmt(row.project_name)}</Link>
+                : fmt(row.project_name)}
+            </FrValue>
+            <FrValue label="Start">{fmt(row.start_date)}</FrValue>
+            <FrValue label="End">{fmt(row.end_date)}</FrValue>
+            <FrValue label="Status">{fmt(row.status)}</FrValue>
+            <FrValue label="Priority">{fmt(row.priority)}</FrValue>
+            <FrValue label="Assignee">{fmt(row.assigned_to_name)}</FrValue>
+            <FrValue label="Summary" span={4}>{fmt(row.summary)}</FrValue>
+          </FrGrid>
+        </FrSection>
+        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+          <RevisionLog rows={revs} />
+        </FrSection>
+      </FrAcc>
+    </FrPage>
   )
 }
 
-export function SubtaskForm() {
-  const { id } = useParams()
-  const nav = useNavigate()
-  const [params] = useSearchParams()
-  const [busy, setBusy] = useState(false)
-  const [tasks, setTasks] = useState<{ value: string; label: string }[]>([])
-  const [form, setForm] = useState<Record<string, string>>({
-    name: '', summary: '', status: 'Open', priority: 'High', task_id: params.get('task_id') || '',
-    assigned_to_name: '', start_date: '', end_date: '',
-  })
-  useEffect(() => {
-    tasksApi.selectlist().then((r) => setTasks((r.results || []).map((o) => ({ value: String(o.id), label: o.text }))))
-  }, [])
-  useEffect(() => {
-    if (!id) return
-    subtasksApi.get(id).then((r) => setForm({
-      name: String(r.name || ''),
-      summary: String(r.summary || ''),
-      status: String(r.status || 'Open'),
-      priority: String(r.priority || ''),
-      task_id: r.task_id != null ? String(r.task_id) : '',
-      assigned_to_name: String(r.assigned_to_name || ''),
-      start_date: dateInput(r.start_date),
-      end_date: dateInput(r.end_date),
-    }))
-  }, [id])
-  function set(k: string, v: string) { setForm((f) => ({ ...f, [k]: v })) }
-  async function save() {
-    setBusy(true)
-    try {
-      const body = { ...form, task_id: form.task_id ? Number(form.task_id) : null }
-      if (id) {
-        await subtasksApi.update(id, body)
-        nav(`/subtasks/${id}`)
-        return
-      }
-      const created = await subtasksApi.create(body)
-      nav(`/subtasks/${created.payload?.id || ''}`)
-    } finally { setBusy(false) }
-  }
-  const backTo = id ? `/subtasks/${id}` : (form.task_id ? `/tasks/${form.task_id}` : '/subtasks')
-  return (
-    <FormShell
-      backTo={backTo}
-      backLabel={id ? 'Back to subtask' : form.task_id ? 'Back to task' : 'All subtasks'}
-      title={id ? 'Edit subtask' : 'New subtask'}
-      subtitle="Keep work small enough to finish in one cycle."
-    >
-        <Section title="Overview">
-          <Field label="Name" value={form.name} onChange={(v) => set('name', v)} />
-          <Field label="Status" value={form.status} onChange={(v) => set('status', v)} options={STATUS_OPTS} />
-          <Field label="Priority" value={form.priority} onChange={(v) => set('priority', v)} options={PRIORITY_OPTS} />
-          <Field label="Parent task" value={form.task_id} onChange={(v) => set('task_id', v)} choices={tasks} />
-        </Section>
-        <Section title="Assignment">
-          <Field label="Assignee" value={form.assigned_to_name} onChange={(v) => set('assigned_to_name', v)} />
-          <Field label="Start date" type="date" value={form.start_date} onChange={(v) => set('start_date', v)} />
-          <Field label="End date" type="date" value={form.end_date} onChange={(v) => set('end_date', v)} />
-        </Section>
-        <Section title="Summary">
-          <Field label="Summary" type="textarea" full value={form.summary} onChange={(v) => set('summary', v)} />
-        </Section>
-        <div className="pm-form-actions">
-          <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save subtask'}</button>
-          <button className="ws-btn ghost" type="button" onClick={() => nav(backTo)}>Cancel</button>
-        </div>
-    </FormShell>
-  )
-}
+export { default as SubtaskForm } from './SubtaskComposer'
 
 export { EmployeesList as EmployeesPage } from './Employees'
 export { UsersList } from './Users'

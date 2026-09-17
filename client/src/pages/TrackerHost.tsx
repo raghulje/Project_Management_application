@@ -1,16 +1,36 @@
 import { useEffect, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { KissflowSDKContext } from '../tracker/sdk/index.js'
 import { ProjectTrackerEmbedContext } from '../tracker/contexts/ProjectTrackerEmbedContext.jsx'
 import { useAuth } from '../api/AuthContext'
 import { goPm } from '../tracker/pmApi.js'
+import { navState } from '../lib/recordNav'
 
-const PROJECT_POPUPS = new Set(['Popup_Xrl9X_fXTJ', 'Popup_OBRKd64ROV'])
-const TASK_POPUPS = new Set(['Popup_8POjXW0UE8', 'Popup_V6Y6naBre6'])
-const SUBTASK_POPUPS = new Set(['Popup_WbcLURdUXx', 'Popup_djVrj_A4yG', 'Popup_RJMQ6gy18i'])
+const PROJECT_POPUPS = new Set([
+  'Popup_Xrl9X_fXTJ',
+  'Popup_OBRKd64ROV',
+  'Popup_RWeNJp0JqJ',
+])
+const TASK_POPUPS = new Set([
+  'Popup_8POjXW0UE8',
+  'Popup_V6Y6naBre6',
+  'Popup_bEJJgrdutd',
+  'Popup_QO1ppGoYU6',
+  'Popup_zNfOGGnPZ-',
+  'Popup_REuPaKLc6u',
+])
+const SUBTASK_POPUPS = new Set([
+  'Popup_WbcLURdUXx',
+  'Popup_djVrj_A4yG',
+  'Popup_RJMQ6gy18i',
+  'Popup_QTJQAyhxOR',
+  'Popup_RTfumy2xG_',
+  'Popup_5OXg4dWTHd',
+  'Popup_rMdM7XTNc-',
+])
 
 function localPopupPath(popupId: string, params: Record<string, unknown> = {}) {
-  const instance = String(params.InstanceID || params.CaseID || params.id || '').trim()
+  const instance = String(params.InstanceID || params.CaseID || params.id || params.Board_ID || '').trim()
   if (PROJECT_POPUPS.has(popupId)) return instance ? `/projects/${encodeURIComponent(instance)}` : '/projects/new'
   if (TASK_POPUPS.has(popupId)) return instance ? `/tasks/${encodeURIComponent(instance)}` : '/tasks/new'
   if (SUBTASK_POPUPS.has(popupId)) return instance ? `/subtasks/${encodeURIComponent(instance)}` : '/subtasks/new'
@@ -20,10 +40,13 @@ function localPopupPath(popupId: string, params: Record<string, unknown> = {}) {
 export default function TrackerHost({ children }: { children: ReactNode }) {
   const { user, isAdmin, roleName } = useAuth()
   const nav = useNavigate()
+  const loc = useLocation()
   useEffect(() => {
-    window.__pmNavigate = (path: string) => nav(path)
+    window.__pmNavigate = (path: string) => {
+      nav(path, { state: navState(loc) })
+    }
     return () => { delete window.__pmNavigate }
-  }, [nav])
+  }, [nav, loc])
 
   const displayName = user?.name
     || [user?.first_name, user?.last_name].filter(Boolean).join(' ')
@@ -45,7 +68,11 @@ export default function TrackerHost({ children }: { children: ReactNode }) {
     api: async () => null,
     user: kfUser,
     client: {
-      showInfo: (msg: string) => { if (msg) window.alert(msg) },
+      showInfo: (msg: string) => {
+        const text = String(msg || '').trim()
+        if (!text || /kissflow sdk/i.test(text) || /open this page inside kissflow/i.test(text)) return
+        window.alert(text)
+      },
       openPopup,
     },
     app: { page: { openPopup } },

@@ -141,6 +141,8 @@ function toTrackerRevision(row: RevisionRow, idx: number) {
   const first = row.changes[0]
   return {
     date: fmtDate(row.created_at) || row.created_at,
+    when: row.created_at,
+    revisionNo: row.revision_no || idx + 1,
     previousEndDate: end?.from ?? first?.from ?? '—',
     newEndDate: end?.to ?? first?.to ?? '—',
     reason: row.changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(' · ') || 'Record updated',

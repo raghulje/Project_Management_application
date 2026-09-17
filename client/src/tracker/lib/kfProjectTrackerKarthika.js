@@ -509,35 +509,23 @@ async function openProcessDraft(kfInstance, processModelId, processLabel, instan
 /**
  * POST draft with Task_ID_Hidden → returns instance ids for openForm.
  */
-export async function createSubtaskInstance(kfInstance, taskIdHidden) {
-  const taskId = String(taskIdHidden || '').trim();
-  if (!taskId) {
-    throw new Error('Missing task id for subtask creation');
-  }
-
-  return postProcessDraft(
-    kfInstance,
-    SUBTASK_PROCESS_ID,
-    { Task_ID_Hidden: taskId },
-    'Subtask',
-  );
+export async function createSubtaskInstance(_kfInstance, taskIdOrRow) {
+  const { goPmNewSubtask } = await import('../pmApi.js');
+  const row = taskIdOrRow && typeof taskIdOrRow === 'object'
+    ? taskIdOrRow
+    : { dbId: /^\d+$/.test(String(taskIdOrRow || '')) ? taskIdOrRow : null };
+  goPmNewSubtask(row);
+  return { local: true, instanceId: '', activityInstanceId: '' };
 }
 
-/**
- * POST draft with Project_ID_Hidden → returns instance ids for openForm.
- */
-export async function createTaskInstance(kfInstance, projectIdHidden) {
-  const projectId = String(projectIdHidden || '').trim();
-  if (!projectId) {
-    throw new Error('Missing project id for task creation');
-  }
-
-  return postProcessDraft(
-    kfInstance,
-    TASK_PROCESS_ID,
-    { Project_ID_Hidden: projectId },
-    'Task',
-  );
+/** Open the local task composer (Kissflow drafts are not used in this app). */
+export async function createTaskInstance(_kfInstance, projectIdOrRow) {
+  const { goPmNewTask } = await import('../pmApi.js');
+  const row = projectIdOrRow && typeof projectIdOrRow === 'object'
+    ? projectIdOrRow
+    : { dbId: /^\d+$/.test(String(projectIdOrRow || '')) ? projectIdOrRow : null };
+  goPmNewTask(row);
+  return { local: true, instanceId: '', activityInstanceId: '' };
 }
 
 export function resolveSubtaskProcess(kfInstance) {
@@ -548,22 +536,10 @@ export function resolveTaskProcess(kfInstance) {
   return resolveProcess(kfInstance, TASK_PROCESS_ID);
 }
 
-export async function openSubtaskDraft(kfInstance, instanceId, activityInstanceId) {
-  return openProcessDraft(
-    kfInstance,
-    SUBTASK_PROCESS_ID,
-    'Sub_Task_Process_A00',
-    instanceId,
-    activityInstanceId,
-  );
+export async function openSubtaskDraft() {
+  return { local: true };
 }
 
-export async function openTaskDraft(kfInstance, instanceId, activityInstanceId) {
-  return openProcessDraft(
-    kfInstance,
-    TASK_PROCESS_ID,
-    'Project_Sub_Task_A01',
-    instanceId,
-    activityInstanceId,
-  );
+export async function openTaskDraft() {
+  return { local: true };
 }

@@ -11,6 +11,7 @@ import {
 } from './pmMyItemsEntities.js'
 import { openPmNewItemPopup } from './kfPmMyItemsCreate.js'
 import { resolvePmPopupId } from './kfPmMyItemsPaths.js'
+import { goPm } from '../pmApi.js'
 
 export const SATELLITE_ORBIT_OPTIONS = [
   {
@@ -80,9 +81,21 @@ export async function openSatelliteCreate(kfInstance, optionKey, overrides = {})
     SATELLITE_ORBIT_OPTIONS.find((o) => o.key === optionKey)
   if (!option) throw new Error(`Unknown satellite option: ${optionKey}`)
 
-  const sdk = resolveSdk(kfInstance)
-  if (!sdk) throw new Error('Kissflow SDK not available')
+  const key = String(option.entity?.key || option.key || optionKey)
+  if (key === 'projects' || key === 'project') {
+    goPm('/projects/new')
+    return { local: true }
+  }
+  if (key === 'tasks' || key === 'task') {
+    goPm('/tasks/new')
+    return { local: true }
+  }
+  if (key === 'subtasks' || key === 'subtask') {
+    goPm('/subtasks/new')
+    return { local: true }
+  }
 
+  const sdk = resolveSdk(kfInstance)
   const entity = option.entity
   const popupOverride = String(overrides?.popupIds?.[optionKey] || '').trim()
 
@@ -96,7 +109,7 @@ export async function openSatelliteCreate(kfInstance, optionKey, overrides = {})
   const popupId = popupOverride || resolvePmPopupId(entity)
   if (!popupId) throw new Error(`Missing popup id for ${option.label}`)
   if (typeof sdk?.app?.page?.openPopup !== 'function') {
-    throw new Error('openPopup is not available on this page')
+    throw new Error('Create form is not available for this item type')
   }
 
   const params = {

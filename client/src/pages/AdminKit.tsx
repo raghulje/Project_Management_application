@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { RecordTrail } from './WorkspaceKit'
 
 export function PageHead({
   title, subtitle, backTo, backLabel = 'Back', children,
@@ -10,8 +11,12 @@ export function PageHead({
   backLabel?: string
   children?: ReactNode
 }) {
+  const crumbs = backTo
+    ? [{ to: '/', label: 'Home' }, { to: backTo, label: backLabel }, { label: title }]
+    : [{ to: '/', label: 'Home' }, { label: title }]
   return (
     <div className="ak">
+      <RecordTrail crumbs={crumbs} />
       {backTo ? <Link className="ws-back" to={backTo}><i className="ri-arrow-left-line" />{backLabel}</Link> : null}
       <div className="pm-page-head">
         <div>

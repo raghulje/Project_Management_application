@@ -11,7 +11,7 @@
 
 import { createPmProcessDraft } from './kfPmMyItemsCreate.js';
 import { SUBTASKS_ENTITY } from './pmMyItemsEntities.js';
-import { goPm, openPmRecord } from '../pmApi.js';
+import { goPm } from '../pmApi.js';
 
 const USER_HUB_POPUP_IDS = {
   project: 'Popup_Xrl9X_fXTJ',
@@ -78,7 +78,6 @@ export function resolveUserHubTaskPopupIds(row) {
 }
 
 export function openUserHubProjectPopup(kfInstance, row, options = {}) {
-  return openPmRecord('project', row);
   const sdk = resolveKfSdk(kfInstance);
   const caseId = resolveUserHubProjectCaseId(row);
   if (typeof sdk?.app?.page?.openPopup !== 'function') {
@@ -148,7 +147,6 @@ export function openUserHubTaskCreatePopup(kfInstance, options = {}) {
 }
 
 export function openUserHubTaskPopup(kfInstance, row, options = {}) {
-  return openPmRecord('task', row);
   const sdk = resolveKfSdk(kfInstance);
   const { instanceId, activityId } = resolveUserHubTaskPopupIds(row);
   if (typeof sdk?.app?.page?.openPopup !== 'function') {
@@ -186,7 +184,6 @@ export function resolveUserHubSubtaskPopupIds(row) {
  * Pass a row or `{ InstanceID, ActivityID }` (e.g. after createSubtaskInstance).
  */
 export function openUserHubSubtaskPopup(kfInstance, row, options = {}) {
-  return openPmRecord('subtask', row);
   const sdk = resolveKfSdk(kfInstance);
   const { instanceId, activityId } = resolveUserHubSubtaskPopupIds(row);
   if (typeof sdk?.app?.page?.openPopup !== 'function') {
@@ -239,7 +236,6 @@ export function resolveUserHubSubtaskProcessPopupIds(row) {
  * Optional `options.popupId` overrides the default popup (e.g. UserSpecificPT My Work).
  */
 export function openUserHubSubtaskProcessPopup(kfInstance, row, options = {}) {
-  return openPmRecord('subtask', row);
   const sdk = resolveKfSdk(kfInstance);
   const { instanceId, activityId } = resolveUserHubSubtaskProcessPopupIds(row);
   const popupId = String(options.popupId || USER_HUB_POPUP_IDS.subtaskProcess).trim();

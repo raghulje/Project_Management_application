@@ -20,6 +20,7 @@ import { dashboardRouter } from './routes/dashboard.js'
 import { settingsRouter, accountRouter } from './routes/settings.js'
 import { notificationsRouter } from './routes/notifications.js'
 import { activityRouter } from './routes/activity.js'
+import { fieldAccessRouter } from './routes/fieldAccess.js'
 import { storageRoot } from './services/uploads.js'
 import { moduleGate, requirePerm } from './services/permissions.js'
 
@@ -100,6 +101,7 @@ export function createApp() {
   api.use('/tasks', moduleGate('tasks'), tasksRouter)
   api.use('/subtasks', moduleGate('subtasks'), subtasksRouter)
   api.use('/activity', activityRouter)
+  api.use('/field-access', fieldAccessRouter)
   api.use('/dashboard', dashboardRouter)
   api.use(notificationsRouter)
   api.use('/settings', moduleGate('settings'), settingsRouter)

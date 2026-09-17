@@ -115,9 +115,6 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, onC
           {trend ? (
             <p className={`mt-2 text-[11px] font-semibold sm:text-xs ${trend.positive ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>{trend.value}</p>
           ) : null}
-          <p className="mt-2 text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100">
-            Click to view →
-          </p>
         </div>
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg sm:h-12 sm:w-12 sm:rounded-xl ${theme.iconBg} ${theme.iconShadow} ${theme.iconRing}`}>
           <i className={`${icon} text-lg text-white/90 sm:text-xl`} />

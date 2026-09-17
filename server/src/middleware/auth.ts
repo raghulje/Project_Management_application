@@ -11,6 +11,7 @@ export type AuthUser = {
   last_name: string
   email: string | null
   company_id: number | null
+  employee_num: string | null
   permissions: Record<string, unknown>
   activated: number
 }
@@ -37,7 +38,7 @@ export async function authRequired(req: Request, res: Response, next: NextFuncti
   try {
     const decoded = jwt.verify(header.slice(7), secret()) as unknown as { sub: number }
     const row = await get<AuthUser>(`
-      SELECT id, username, first_name, last_name, email, company_id, permissions, activated
+      SELECT id, username, first_name, last_name, email, company_id, employee_num, permissions, activated
       FROM users WHERE id = ? AND deleted_at IS NULL
     `, [decoded.sub])
 

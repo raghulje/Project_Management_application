@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import PtSelect from '../../../components/PtSelect.jsx';
 
 const PAGE_SIZE = 10;
 
@@ -249,57 +250,41 @@ export default function ProjectHealthTable({ data, onRowClick }) {
             />
           </div>
           <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:pb-0 lg:justify-end [&::-webkit-scrollbar]:hidden">
-            <select
+            <PtSelect
               value={ragFilter}
               onChange={(e) => setRagFilter(e.target.value)}
-              className="min-w-0 shrink-0 snap-start cursor-pointer rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] shadow-sm outline-none focus:border-indigo-500 sm:text-xs"
-            >
-              <option value="all">All RAG</option>
-              <option value="Red">🔴 Red</option>
-              <option value="Amber">🟡 Amber</option>
-              <option value="Green">🟢 Green</option>
-            </select>
-            <select
+              className="min-w-[8.5rem] shrink-0 snap-start"
+              options={[
+                { value: 'all', label: 'All RAG' },
+                { value: 'Red', label: 'Red' },
+                { value: 'Amber', label: 'Amber' },
+                { value: 'Green', label: 'Green' },
+              ]}
+            />
+            <PtSelect
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="min-w-0 shrink-0 snap-start cursor-pointer rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] shadow-sm outline-none focus:border-indigo-500 sm:text-xs"
-            >
-              <option value="all">All Status</option>
-              {statuses.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <select
+              className="min-w-[8.5rem] shrink-0 snap-start"
+              options={[{ value: 'all', label: 'All Status' }, ...statuses.map((s) => ({ value: s, label: s }))]}
+            />
+            <PtSelect
               value={ownerFilter}
               onChange={(e) => setOwnerFilter(e.target.value)}
-              className="min-w-[7.5rem] shrink-0 snap-start cursor-pointer rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] shadow-sm outline-none focus:border-indigo-500 sm:max-w-[180px] sm:text-xs"
-            >
-              <option value="all">All Owners</option>
-              {owners.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
+              className="min-w-[8.5rem] shrink-0 snap-start sm:max-w-[180px]"
+              options={[{ value: 'all', label: 'All Owners' }, ...owners.map((o) => ({ value: o, label: o }))]}
+            />
           </div>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 lg:hidden">
         <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Sort by</span>
-        <select
+        <PtSelect
           value={sortKey}
           onChange={(e) => setSortKey(e.target.value)}
-          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white py-1.5 pl-2 pr-6 text-[11px] font-medium text-slate-700"
-        >
-          {COLUMN_META.map((col) => (
-            <option key={col.key} value={col.key}>
-              {col.label}
-            </option>
-          ))}
-        </select>
+          className="min-w-0 flex-1"
+          options={COLUMN_META.map((col) => ({ value: col.key, label: col.label }))}
+        />
         <button
           type="button"
           onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}

@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import WsSelect from './WsSelect'
+import WsDate from './WsDate'
 
 export const STATUS_OPTS = ['Open', 'In Progress', 'On Hold', 'Completed', 'Closed', 'Cancelled']
 export const PRIORITY_OPTS = ['High', 'Medium', 'Low']
@@ -35,7 +37,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
 }
 
 export function Field({
-  label, value, onChange, type = 'text', options, choices, full, placeholder, disabled,
+  label, value, onChange, type = 'text', options, choices, full, placeholder, disabled, mark,
 }: {
   label: string
   value: string
@@ -46,22 +48,31 @@ export function Field({
   full?: boolean
   placeholder?: string
   disabled?: boolean
+  mark?: ReactNode
 }) {
   return (
-    <label className={`pm-field${full ? ' full' : ''}`}>
-      <span>{label}</span>
+    <label className={`pm-field${full ? ' full' : ''}${disabled ? ' is-locked' : ''}`}>
+      <span>{label}{mark}</span>
       {choices ? (
-        <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Select…</option>
-          {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <WsSelect
+          value={value}
+          disabled={disabled}
+          placeholder="Select..."
+          options={[{ value: '', label: 'Select...' }, ...choices]}
+          onChange={onChange}
+        />
       ) : options ? (
-        <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Select…</option>
-          {options.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <WsSelect
+          value={value}
+          disabled={disabled}
+          placeholder="Select..."
+          options={['', ...options].map((o) => (o ? o : { value: '', label: 'Select...' }))}
+          onChange={onChange}
+        />
       ) : type === 'textarea' ? (
         <textarea value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} rows={4} />
+      ) : type === 'date' ? (
+        <WsDate value={value} disabled={disabled} placeholder={placeholder || 'Pick a date'} onChange={onChange} />
       ) : (
         <input type={type} value={value} placeholder={placeholder} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
       )}

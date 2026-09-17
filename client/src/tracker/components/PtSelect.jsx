@@ -37,7 +37,7 @@ export default function PtSelect({
   onChange,
   onValueChange,
   options = [],
-  placeholder = 'Select…',
+  placeholder = 'Select...',
   className = '',
   triggerClassName = '',
   menuClassName = '',

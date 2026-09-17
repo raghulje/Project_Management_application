@@ -4,6 +4,7 @@ import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
 import { attachRevisionCounts, diffRecords, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
 
 export const projectsRouter = Router()
 
@@ -27,7 +28,7 @@ const WRITE = [
   'risk_mitigation_details',
 ] as const
 
-function mapProject(row: Record<string, unknown>, extras: Record<string, unknown> = {}) {
+function mapProject(row: Record<string, unknown>, extras: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     ...row,
     ai_usage: Boolean(row.ai_usage),
@@ -96,7 +97,8 @@ projectsRouter.get('/:id', async (req, res) => {
       SUM(CASE WHEN status IN ('Completed','Closed') THEN 1 ELSE 0 END) as done_tasks
     FROM tasks WHERE project_id = ? AND deleted_at IS NULL
   `, [row.id])
-  return okItem(res, mapProject(row, { tasks, timeline, revisions, revision_count: revisions.length, task_counts: counts }))
+  const mapped = mapProject(row, { tasks, timeline, revisions, revision_count: revisions.length, task_counts: counts })
+  return okItem(res, req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
 })
 
 function asTech(v: unknown): string {
@@ -137,7 +139,8 @@ function writeVals(body: Record<string, unknown>) {
 projectsRouter.post('/', async (req, res) => {
   const b = req.body || {}
   if (!b.name) return fail(res, 'name is required')
-  const { fields, vals } = writeVals(b)
+  const meta = await resolveAssignmentMeta('project', b)
+  const { fields, vals } = writeVals({ ...b, ...meta.extra })
   if (!fields.includes('name')) { fields.push('name'); vals.push(b.name) }
   const ts = now()
   const cols = [...fields, 'created_by_user_id', 'created_at', 'updated_at']
@@ -179,14 +182,27 @@ projectsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const existing = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL`, [id])
   if (!existing) return fail(res, 'Project not found', 404)
-  const { fields, vals } = writeVals(req.body || {})
+  if (!req.user) return fail(res, 'Unauthorized', 401)
+  const filtered = await filterWritableUpdate({
+    user: req.user,
+    itemType: 'project',
+    existing,
+    body: req.body || {},
+    writeFields: WRITE,
+  })
+  if (!filtered.ok) return fail(res, filtered.message, filtered.status, filtered.payload)
+  if (filtered.unchanged) {
+    const mapped = mapProject(existing)
+    return okMessage(res, 'No changes', req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
+  }
+  const { fields, vals } = writeVals(filtered.body)
   if (!fields.length) return fail(res, 'No fields')
   await run(
     `UPDATE projects SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_by_user_id = ?, updated_at = ? WHERE id = ?`,
     [...vals, req.user?.id ?? null, now(), id],
   )
   const after = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ?`, [id])
-  const changes = diffRecords(existing, after || {}, fields)
+  const changes = diffRecords(existing, after || {})
   await recordRevision({ itemType: 'project', itemId: id, user: req.user, changes })
   if (changes.some((c) => c.field === 'end_date')) {
     await run(
@@ -218,7 +234,7 @@ projectsRouter.put('/:id', async (req, res) => {
     projectId: id,
     projectCode: val(mapped, 'project_code') || val(mapped, 'kissflow_id'),
   })
-  return okMessage(res, 'Project updated', mapped)
+  return okMessage(res, 'Project updated', req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
 })
 
 projectsRouter.delete('/:id', async (req, res) => {

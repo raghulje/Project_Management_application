@@ -31,6 +31,26 @@ export function invalidatePmPortfolio() {
   cache = null
 }
 
+export async function syncPmFromKissflow() {
+  const token = localStorage.getItem('refex_pm_token')
+  const res = await fetch('/api/v1/dashboard/kissflow-sync', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: '{}',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const message = Array.isArray(data.messages) ? data.messages[0] : (data.message || 'Kissflow sync failed')
+    throw new Error(message || `HTTP ${res.status}`)
+  }
+  invalidatePmPortfolio()
+  return data
+}
+
 export async function fetchPmProjects() {
   const data = await fetchPmPortfolio()
   return data.projects || []
@@ -151,9 +171,28 @@ export function openPmRecord(kind, row) {
   return goPm(ref ? `${base}/${encodeURIComponent(ref)}` : base)
 }
 
+function queryId(row) {
+  return resolvePmRecordId(row)
+}
+
+export function goPmNewProject() {
+  return goPm('/projects/new')
+}
+
+export function goPmNewTask(project) {
+  const id = queryId(project)
+  return goPm(id ? `/tasks/new?project_id=${encodeURIComponent(id)}` : '/tasks/new')
+}
+
+export function goPmNewSubtask(task) {
+  const id = queryId(task)
+  return goPm(id ? `/subtasks/new?task_id=${encodeURIComponent(id)}` : '/subtasks/new')
+}
+
 export function goPm(path) {
+  const from = typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : ''
   if (typeof window !== 'undefined' && typeof window.__pmNavigate === 'function') {
-    window.__pmNavigate(path)
+    window.__pmNavigate(path, { from })
     return true
   }
   if (typeof window !== 'undefined') {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { MySubtask } from '@/mocks/employee-dashboard';
+import PtSelect from '../../../components/PtSelect.jsx';
 
 interface EmpSubtasksTableProps {
   tasks: MySubtask[];
@@ -156,7 +157,6 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }: 
             )}
             {filtered.map((t, i) => {
               const pri = priorityConfig[t.priority];
-              const st = statusConfig[t.status] ?? statusConfig['Not Started'];
               const isCompleted = t.status === 'Completed';
 
               return (
@@ -236,19 +236,19 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }: 
                       {t.agingDays > 0 ? `${t.agingDays}d` : '—'}
                     </span>
                   </td>
-                  <td className="px-6 py-3">
-                    <select
+                  <td className="px-6 py-3" onClick={(e) => e.stopPropagation()}>
+                    <PtSelect
                       value={t.status}
                       onChange={(e) => onStatusChange(t.id, e.target.value as MySubtask['status'])}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-xs px-2.5 py-1.5 rounded-lg font-medium border-0 outline-none cursor-pointer"
-                      style={{ background: st.bg, color: st.color, fontFamily: 'Inter, sans-serif' }}
-                    >
-                      <option value="Not Started">Not Started</option>
-                      <option value="In Progress">In Progress</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Overdue">Overdue</option>
-                    </select>
+                      className="min-w-[8.5rem]"
+                      triggerClassName="h-8 min-h-[32px] border-0 text-xs font-medium"
+                      options={[
+                        { value: 'Not Started', label: 'Not Started' },
+                        { value: 'In Progress', label: 'In Progress' },
+                        { value: 'Completed', label: 'Completed' },
+                        { value: 'Overdue', label: 'Overdue' },
+                      ]}
+                    />
                   </td>
                   <td className="px-6 py-3">
                     {!isCompleted ? (

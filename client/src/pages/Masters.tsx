@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { mastersApi } from '../api/client'
 import { useDebounced } from '../lib/useDebounced'
-import { Alert, EmptyState, Insights, PageHead } from './AdminKit'
+import { Alert } from './AdminKit'
+import { FrAcc, FrField, FrGrid, FrHeader, FrPage, FrPanel, FrSection } from './FormReference'
 
 type Row = Record<string, unknown>
 type Field = { key: string; label: string; placeholder?: string }
 type Crud = typeof mastersApi.companies
 
 function MasterModule({
-  title, noun, subtitle, icon, api, fields,
+  title, noun, api, fields,
 }: {
   title: string
   noun: string
@@ -76,47 +77,39 @@ function MasterModule({
   }
 
   return (
-    <div className="ak">
-      <PageHead title={title} subtitle={`${filtered.length} ${subtitle}`}>
-        <button className="ws-btn" type="button" onClick={startCreate}><i className="ri-add-line" />Add</button>
-      </PageHead>
-      <Insights cards={[
-        { label: title, value: filtered.length, icon, tone: 'blue' },
-      ]} />
+    <FrPage>
+      <FrHeader title={title} count={`${filtered.length} total records`}>
+        <input className="fr-search" placeholder={`Search records...`} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <button className="ws-btn" type="button" onClick={startCreate}><i className="ri-add-line" />Create</button>
+      </FrHeader>
       {err ? <Alert kind="err">{err}</Alert> : null}
       {msg ? <Alert kind="ok">{msg}</Alert> : null}
 
       {open ? (
-        <div className="ak-panel">
-          <div className="ak-panel-head">
-            <h2>{editId ? `Edit ${noun}` : `New ${noun}`}</h2>
-            <button className="ws-btn ghost" type="button" onClick={() => setOpen(false)}>Close</button>
-          </div>
-          <div className="ak-form">
-            {fields.map((f) => (
-              <label key={f.key} className="pm-field">
-                <span>{f.label}</span>
-                <input
-                  value={form[f.key] || ''}
-                  placeholder={f.placeholder}
-                  onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
-                />
-              </label>
-            ))}
-          </div>
-          <div className="pm-form-actions">
-            <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
-            <button className="ws-btn ghost" type="button" onClick={() => setOpen(false)}>Cancel</button>
-          </div>
-        </div>
+        <FrAcc>
+          <FrSection label={editId ? `Edit ${noun}` : `New ${noun}`}>
+            <div className="fr-sec-tools">
+              <button className="ws-btn ghost" type="button" onClick={() => setOpen(false)}>Discard</button>
+              <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : editId ? 'Save changes' : 'Submit'}</button>
+            </div>
+            <FrGrid>
+              {fields.map((f) => (
+                <FrField key={f.key} label={f.label} required={f.key === 'name'} span={fields.length === 1 ? 4 : 2}>
+                  <input
+                    value={form[f.key] || ''}
+                    placeholder={f.placeholder}
+                    onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                  />
+                </FrField>
+              ))}
+            </FrGrid>
+          </FrSection>
+        </FrAcc>
       ) : null}
 
-      <div className="pm-card">
-        <div className="pm-toolbar">
-          <input placeholder={`Search ${title.toLowerCase()}`} value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <div className="ak-table-wrap">
-          <table className="pm-table">
+      <FrPanel>
+        <div className="fr-table-wrap">
+          <table className="fr-table">
             <thead>
               <tr>
                 {fields.map((f) => <th key={f.key}>{f.label}</th>)}
@@ -125,7 +118,7 @@ function MasterModule({
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={fields.length + 1}><EmptyState icon={icon} title={`No ${title.toLowerCase()} yet`} text="Add the first record to start building this master." /></td></tr>
+                <tr><td colSpan={fields.length + 1} className="fr-empty">No records found</td></tr>
               ) : filtered.map((r) => (
                 <tr key={String(r.id)}>
                   {fields.map((f) => <td key={f.key}>{String(r[f.key] || '—')}</td>)}
@@ -138,8 +131,8 @@ function MasterModule({
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
+      </FrPanel>
+    </FrPage>
   )
 }
 

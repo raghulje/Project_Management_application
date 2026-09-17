@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import PtSelect from '../../../components/PtSelect.jsx';
 
 function StatusBadge({ status }) {
   const map = {
@@ -57,29 +58,24 @@ export default function SubtaskTable({ data, onRowClick }) {
             />
           </div>
           <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:pb-0 [&::-webkit-scrollbar]:hidden">
-            <select
+            <PtSelect
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="shrink-0 snap-start cursor-pointer rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] outline-none focus:border-indigo-500 sm:text-xs"
-            >
-              <option value="all">All Status</option>
-              <option value="Pending">Pending</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Completed">Completed</option>
-              <option value="Overdue">Overdue</option>
-            </select>
-            <select
+              className="min-w-[8.5rem] shrink-0 snap-start"
+              options={[
+                { value: 'all', label: 'All Status' },
+                { value: 'Pending', label: 'Pending' },
+                { value: 'In Progress', label: 'In Progress' },
+                { value: 'Completed', label: 'Completed' },
+                { value: 'Overdue', label: 'Overdue' },
+              ]}
+            />
+            <PtSelect
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
-              className="min-w-[8rem] shrink-0 snap-start cursor-pointer rounded-2xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] outline-none focus:border-indigo-500 sm:max-w-[180px] sm:text-xs"
-            >
-              <option value="all">All Projects</option>
-              {projects.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+              className="min-w-[8.5rem] shrink-0 snap-start sm:max-w-[180px]"
+              options={[{ value: 'all', label: 'All Projects' }, ...projects.map((p) => ({ value: p, label: p }))]}
+            />
           </div>
         </div>
       </div>

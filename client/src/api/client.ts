@@ -56,7 +56,7 @@ export async function api<T = unknown>(
     throw new ApiError(res.status, messages, data.payload ?? null)
   }
   const method = String(options.method || 'GET').toUpperCase()
-  if (method !== 'GET' && /\/(projects|tasks|subtasks)(\/|$|\?)/.test(path)) {
+  if (method !== 'GET' && (/\/(projects|tasks|subtasks)(\/|$|\?)/.test(path) || path.includes('kissflow-sync'))) {
     invalidatePmPortfolio()
   }
   return data as T
@@ -85,6 +85,11 @@ export const dashboardApi = {
     category: { label: string; value: number }[]
     taskStatus: { label: string; value: number }[]
   }>('/dashboard/charts'),
+  syncKissflow: () =>
+    api<{ status: string; messages: string[]; payload: Record<string, unknown> }>(
+      '/dashboard/kissflow-sync',
+      { method: 'POST', json: {} },
+    ),
 }
 
 function crud(base: string) {
@@ -98,8 +103,8 @@ function crud(base: string) {
       api<{ status: string; messages: string[]; payload: Record<string, unknown> }>(`${base}/${id}`, { method: 'PUT', json: body }),
     remove: (id: number | string) =>
       api<{ status: string; messages: string[] }>(`${base}/${id}`, { method: 'DELETE' }),
-    selectlist: (search?: string) =>
-      api<{ results: SelectOption[] }>(`${base}/selectlist${qs({ search })}`),
+    selectlist: (search?: string, limit?: number) =>
+      api<{ results: SelectOption[] }>(`${base}/selectlist${qs({ search, limit })}`),
   }
 }
 
@@ -140,11 +145,12 @@ export const activityApi = {
   removeComment: (id: number | string) => api(`/activity/comments/${id}`, { method: 'DELETE' }),
   setAssignees: (item_type: string, item_id: number | string, names: string[]) =>
     api('/activity/assignees', { method: 'PUT', json: { item_type, item_id, names } }),
-  upload: async (item_type: string, item_id: number | string, file: File) => {
+  upload: async (item_type: string, item_id: number | string, file: File, kind?: string) => {
     const body = new FormData()
     body.append('file', file)
     body.append('item_type', item_type)
     body.append('item_id', String(item_id))
+    if (kind) body.append('kind', kind)
     return api<{ payload: Record<string, unknown> }>('/activity/files', { method: 'POST', body })
   },
   download: async (id: number | string, fileName: string) => {

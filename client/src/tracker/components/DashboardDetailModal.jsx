@@ -477,12 +477,6 @@ function TaskDetailFormView({ row, viewerName = 'User', isSubtask = false }) {
                 key={rev.key || `${rev.date}-${idx}`}
                 className="rounded-lg border border-slate-200/90 bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] text-slate-600">
-                    Updated on: <span className="font-medium text-slate-800">{rev.date || '—'}</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500">{rev.revisedBy || 'System'}</p>
-                </div>
                 <RevisionChangeLines rev={rev} />
               </div>
             ))}
@@ -603,12 +597,6 @@ function DelayRevisionDetailView({ row }) {
                 key={rev.key || `${rev.date}-${idx}`}
                 className="rounded-lg border border-slate-200/90 bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] text-slate-600">
-                    Updated on: <span className="font-medium text-slate-800">{rev.date || '—'}</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500">{rev.revisedBy || 'System'}</p>
-                </div>
                 <RevisionChangeLines rev={rev} />
               </div>
             ))}
@@ -620,7 +608,7 @@ function DelayRevisionDetailView({ row }) {
 }
 
 /** In-app detail modal — compact fields + themed contrast. */
-export default function DashboardDetailModal({ detail, onClose, viewerName = 'User' }) {
+export default function DashboardDetailModal({ detail, onClose, viewerName = 'User', onOpenRecord = null }) {
   useEffect(() => {
     if (!detail) return undefined;
     const onKey = (e) => {
@@ -693,14 +681,24 @@ export default function DashboardDetailModal({ detail, onClose, viewerName = 'Us
                 )}
               </div>
 
-              <div className="flex shrink-0 justify-end border-t border-slate-200/80 bg-white px-4 py-2.5 sm:px-5">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-slate-200/80 bg-white px-4 py-2.5 sm:px-5">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="inline-flex h-9 items-center justify-center rounded-xl bg-[#1E88E5] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1565C0]"
+                  className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                 >
                   Close
                 </button>
+                {typeof onOpenRecord === 'function' ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenRecord(row)}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-[#1E88E5] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1565C0]"
+                  >
+                    <i className="ri-external-link-line" aria-hidden />
+                    Open record
+                  </button>
+                ) : null}
               </div>
             </motion.div>
           </div>

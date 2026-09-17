@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Modal from '../../../components/base/Modal';
 import Button from '../../../components/base/Button';
+import PtSelect from '../../../components/PtSelect.jsx';
 const LOB_OPTIONS = ['Enterprise IT', 'Business Intelligence', 'Finance & Accounting', 'Customer Experience', 'Digital Innovation', 'IT Operations', 'Risk & Compliance', 'Human Resources'];
 const RESOURCE_OPTIONS = ['Cloud Infrastructure Team', 'Data Analytics Team', 'Finance Tech Team', 'Mobile Dev Team', 'AI/ML Team', 'DevOps Team', 'Security Team', 'HR Tech Team'];
 const OWNER_OPTIONS = ['Arjun Mehta', 'Sneha Reddy', 'Deepak Verma', 'Priya Iyer', 'Aditya Kumar', 'Kiran Shah', 'Meera Pillai', 'Rohit Bansal'];
@@ -78,9 +79,9 @@ export default function CreateProjectModal({ open, onClose, onCreate }) {
         `}/>
       {errors[key] && <p className="text-xs text-red-500 mt-1">{errors[key]}</p>}
     </div>);
-    const selectField = (value, onChange, options) => (<select value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all">
-      {options.map((o) => <option key={o}>{o}</option>)}
-    </select>);
+    const selectField = (value, onChange, options) => (
+      <PtSelect value={value} onChange={(e) => onChange(e.target.value)} className="w-full" options={options} />
+    );
     const Label = ({ children }) => (<label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{children}</label>);
     return (<Modal open={open} onClose={onClose} title="Create New Project" width="max-w-3xl" footer={<>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>

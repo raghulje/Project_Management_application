@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface Window {
-  __pmNavigate?: (path: string) => void
+  __pmNavigate?: (path: string, extra?: { from?: string }) => void
 }
 
 declare module '*.jsx' {

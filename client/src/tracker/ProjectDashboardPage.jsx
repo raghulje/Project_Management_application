@@ -28,16 +28,10 @@ import {
 import { KissflowSDKContext, kf } from './sdk/index.js';
 import { auditRevisionEntries, RevisionChangeLines } from './lib/revisionAudit.jsx';
 import {
-  createTaskInstance,
-  createSubtaskInstance,
-  openTaskDraft,
-  openSubtaskDraft,
-  fetchAllSubtasks,
   filterSubtasksForTask,
 } from './lib/kfProjectTrackerKarthika.js';
 import { kfGetJson, resolveKissflowAccountId, runWithConcurrency } from './lib/kfRuntime.js';
 import {
-  ensureTaskBusinessIdForCreate,
   fetchTaskTrackerData,
   resolveTaskBusinessIdFromRow,
   mapProcessSubtaskItem,
@@ -48,7 +42,9 @@ import {
   filterTasksByManagerEmail,
   filterTasksByAllowedProjects,
 } from './lib/kfMyTeamTasks.js';
-import { fetchPmPortfolio, openPmRecord, scrollPmToElement } from './pmApi.js';
+import { fetchPmPortfolio, goPm, goPmNewProject, goPmNewSubtask, goPmNewTask, openPmRecord, scrollPmToElement, syncPmFromKissflow } from './pmApi.js';
+import { collectProjectExportRows, exportProjectAccordion } from './lib/exportProjectAccordion.js';
+import { compareCreatedAt, sortByCreatedAtDesc } from './lib/dashboardCreatedDateFilters.js';
 
 /** --- Kissflow API / data layer (from kfProjectDashboard) --- */
 /** Kissflow Project Management case — shared list/detail mapping & fetch (CTO + employee dashboards). */
@@ -803,14 +799,6 @@ function resolveCreatedDateRange(createdYear, createdPeriod) {
   return null;
 }
 
-function projectMatchesCreatedRange(row, range) {
-  if (!range) return true;
-  const created = parseKfDate(row?.createdAt || row?._created_at);
-  if (!created) return false;
-  const t = created.getTime();
-  return t >= range.from.getTime() && t <= range.to.getTime();
-}
-
 function parseYmdRange(fromStr, toStr) {
   const fromRaw = String(fromStr || '').trim();
   const toRaw = String(toStr || '').trim();
@@ -833,28 +821,106 @@ function resolveDimensionCreatedRanges(filters) {
   return legacy ? [legacy] : [];
 }
 
-function projectMatchesAnyCreatedRange(row, ranges) {
-  if (!Array.isArray(ranges) || ranges.length === 0) return true;
-  return ranges.some((range) => projectMatchesCreatedRange(row, range));
+function normalizePeriodCategory(value) {
+  const v = String(value || 'created').trim().toLowerCase();
+  if (v === 'closed') return 'closed';
+  if (v === 'needaction' || v === 'need_action' || v === 'action') return 'needAction';
+  return 'created';
 }
 
-function taskMatchesCreatedRange(row, range) {
-  if (!range) return true;
-  const created = parseKfDate(
-    row?.createdAt ||
-      row?.createdDate ||
-      row?._created_at ||
-      row?.raw?._created_at ||
-      row?.raw?.Created_at,
+/** "this week" / "this month" / "this quarter" / "this half" / "this FY" */
+function getPeriodCategoryScopeLabel(filters) {
+  const mode = String(filters?.periodMode || '').trim();
+  const parts = (Array.isArray(filters?.periodParts) ? filters.periodParts : []).filter(
+    (p) => p && p !== 'FULL',
   );
-  if (!created) return false;
-  const t = created.getTime();
-  return t >= range.from.getTime() && t <= range.to.getTime();
+  if (mode === 'weekly') return 'this week';
+  if (mode === 'monthly') return 'this month';
+  if (mode === 'fy') {
+    if (parts.some((p) => String(p).startsWith('Q'))) return 'this quarter';
+    if (parts.some((p) => String(p).startsWith('H'))) return 'this half';
+    return 'this FY';
+  }
+  return 'this period';
 }
 
-function taskMatchesAnyCreatedRange(row, ranges) {
+function dateInAnyRange(dateLike, ranges) {
   if (!Array.isArray(ranges) || ranges.length === 0) return true;
-  return ranges.some((range) => taskMatchesCreatedRange(row, range));
+  const parsed = parseKfDate(dateLike);
+  if (!parsed) return false;
+  const t = parsed.getTime();
+  return ranges.some((range) => t >= range.from.getTime() && t <= range.to.getTime());
+}
+
+function getRowCreatedValue(row) {
+  return (
+    row?.createdAt ||
+    row?.createdDate ||
+    row?._created_at ||
+    row?.raw?._created_at ||
+    row?.raw?.Created_at ||
+    null
+  );
+}
+
+function getRowClosedValue(row) {
+  return (
+    row?.closedAt ||
+    row?.resolvedAt ||
+    row?.raw?._resolved_at ||
+    row?.raw?._completed_at ||
+    row?.raw?.Actual_End_Date_1 ||
+    (isClosedProjectStatus(row?.status)
+      ? row?.modifiedAt || row?.raw?._modified_at || row?.endDate || row?.originalEndDate
+      : null)
+  );
+}
+
+function getRowDueValue(row) {
+  return (
+    row?.raw?.End_Date ||
+    row?.raw?.End_date ||
+    row?.raw?.End_Date_1 ||
+    row?.plannedEndDate ||
+    row?.originalEndDate ||
+    row?.endDate ||
+    row?.end ||
+    row?.due ||
+    null
+  );
+}
+
+function rowIsClosed(row) {
+  return isClosedProjectStatus(row?.status);
+}
+
+/** Need action = planned End_Date falls in the selected period window. */
+function rowNeedsActionInPeriod(row, ranges) {
+  return dateInAnyRange(getRowDueValue(row), ranges);
+}
+
+function rowMatchesPeriodCategory(row, ranges, category) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return true;
+  const cat = normalizePeriodCategory(category);
+  if (cat === 'closed') return rowIsClosed(row) && dateInAnyRange(getRowClosedValue(row), ranges);
+  if (cat === 'needAction') return rowNeedsActionInPeriod(row, ranges);
+  return dateInAnyRange(getRowCreatedValue(row), ranges);
+}
+
+function applyPeriodCategoryFilter(rows, filters) {
+  const ranges = resolveDimensionCreatedRanges(filters);
+  if (!ranges.length) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter((row) =>
+    rowMatchesPeriodCategory(row, ranges, filters?.periodCategory),
+  );
+}
+
+function countPeriodCategoryMatches(rows, filters, category) {
+  const ranges = resolveDimensionCreatedRanges(filters);
+  if (!ranges.length) return 0;
+  return (Array.isArray(rows) ? rows : []).filter((row) =>
+    rowMatchesPeriodCategory(row, ranges, category),
+  ).length;
 }
 
 function hasPortfolioDimensionFilters(filters) {
@@ -881,65 +947,67 @@ function isInformationTechnologyCategory(value) {
   return normalizeDimensionValue(value) === normalizeDimensionValue(IT_BUSINESS_FUNCTION);
 }
 
-function filterProjectsByDimensions(rows, filters) {
-  if (!hasActiveDimensionFilters(filters)) return rows;
-  const createdRanges = resolveDimensionCreatedRanges(filters);
-  return rows.filter((row) => {
+function filterProjectsByPortfolioDims(rows, filters) {
+  if (!hasPortfolioDimensionFilters(filters)) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
     if (filters.company && normalizeDimensionValue(row.companyName) !== filters.company) return false;
     if (filters.department && normalizeDimensionValue(row.department) !== filters.department) return false;
     if (filters.lineOfBusiness && normalizeDimensionValue(row.lineOfBusiness) !== filters.lineOfBusiness) return false;
     if (filters.functionType && normalizeDimensionValue(row.functionType) !== filters.functionType) return false;
-    if (!projectMatchesAnyCreatedRange(row, createdRanges)) return false;
     return true;
+  });
+}
+
+function filterProjectsByDimensions(rows, filters) {
+  if (!hasActiveDimensionFilters(filters)) return rows;
+  return applyPeriodCategoryFilter(filterProjectsByPortfolioDims(rows, filters), filters);
+}
+
+function filterTasksLinkedToProjects(tasks, projects, filters) {
+  if (!hasPortfolioDimensionFilters(filters)) return Array.isArray(tasks) ? tasks : [];
+  if (!projects.length) return [];
+  const projectIds = new Set(projects.map((p) => p.id));
+  const projectNames = new Set(projects.map((p) => p.name).filter(Boolean));
+  const projectRefs = new Set(projects.map((p) => String(p.displayId || '').trim()).filter(Boolean));
+
+  return (Array.isArray(tasks) ? tasks : []).filter((task) => {
+    if (task.projectId && projectIds.has(task.projectId)) return true;
+    if (task.projectName && projectNames.has(task.projectName)) return true;
+    const ref = String(task.projectRef || task.raw?.Project_ID_Details || '').trim();
+    if (ref && projectRefs.has(ref)) return true;
+    return false;
   });
 }
 
 function filterTasksByProjects(tasks, projects, filters) {
   if (!hasActiveDimensionFilters(filters)) return tasks;
-
-  const createdRanges = resolveDimensionCreatedRanges(filters);
-  const needsProjectLink = hasPortfolioDimensionFilters(filters);
-  let next = Array.isArray(tasks) ? tasks : [];
-
-  if (needsProjectLink) {
-    if (!projects.length) return [];
-    const projectIds = new Set(projects.map((p) => p.id));
-    const projectNames = new Set(projects.map((p) => p.name).filter(Boolean));
-    const projectRefs = new Set(projects.map((p) => String(p.displayId || '').trim()).filter(Boolean));
-
-    next = next.filter((task) => {
-      if (task.projectId && projectIds.has(task.projectId)) return true;
-      if (task.projectName && projectNames.has(task.projectName)) return true;
-      const ref = String(task.projectRef || task.raw?.Project_ID_Details || '').trim();
-      if (ref && projectRefs.has(ref)) return true;
-      return false;
-    });
-  }
-
-  if (createdRanges.length) {
-    next = next.filter((task) => taskMatchesAnyCreatedRange(task, createdRanges));
-  }
-
-  return next;
+  const linked = hasPortfolioDimensionFilters(filters)
+    ? filterTasksLinkedToProjects(tasks, projects, filters)
+    : (Array.isArray(tasks) ? tasks : []);
+  return applyPeriodCategoryFilter(linked, filters);
 }
 
 function filterProcessSubtasksByTasks(processSubtasks, tasks, filters) {
   if (!hasActiveDimensionFilters(filters)) return processSubtasks;
-  if (!tasks.length) return [];
 
-  const taskKeys = new Set();
-  for (const task of tasks) {
-    const businessId = resolveTaskBusinessIdFromRow(task);
-    if (businessId) taskKeys.add(businessId);
-    if (task.id) taskKeys.add(String(task.id));
-    if (task.taskId) taskKeys.add(String(task.taskId));
+  let next = Array.isArray(processSubtasks) ? processSubtasks : [];
+  if (hasPortfolioDimensionFilters(filters)) {
+    if (!tasks.length) return [];
+    const taskKeys = new Set();
+    for (const task of tasks) {
+      const businessId = resolveTaskBusinessIdFromRow(task);
+      if (businessId) taskKeys.add(businessId);
+      if (task.id) taskKeys.add(String(task.id));
+      if (task.taskId) taskKeys.add(String(task.taskId));
+    }
+    next = next.filter((sub) => {
+      const parentId = String(sub.parentTaskBusinessId || '').trim();
+      const subId = String(sub.id || '').trim();
+      return (parentId && taskKeys.has(parentId)) || (subId && taskKeys.has(subId));
+    });
   }
 
-  return processSubtasks.filter((sub) => {
-    const parentId = String(sub.parentTaskBusinessId || '').trim();
-    const subId = String(sub.id || '').trim();
-    return (parentId && taskKeys.has(parentId)) || (subId && taskKeys.has(subId));
-  });
+  return applyPeriodCategoryFilter(next, filters);
 }
 
 function countActiveDimensionFilters(filters) {
@@ -951,6 +1019,67 @@ function countActiveDimensionFilters(filters) {
   if (filters?.periodFrom || (Array.isArray(filters?.periodRanges) && filters.periodRanges.length > 0)) n += 1;
   if (filters?.createdYear) n += 1;
   return n;
+}
+
+function PeriodCategoryChips({
+  filters,
+  counts = null,
+  onChange,
+  compact = false,
+}) {
+  const ranges = resolveDimensionCreatedRanges(filters);
+  if (!ranges.length) return null;
+  const scope = getPeriodCategoryScopeLabel(filters);
+  const active = normalizePeriodCategory(filters?.periodCategory);
+  const items = [
+    { key: 'created', label: 'Created', icon: 'ri-add-circle-line' },
+    { key: 'closed', label: 'Closed', icon: 'ri-checkbox-circle-line' },
+    { key: 'needAction', label: 'Need action', icon: 'ri-error-warning-line' },
+  ];
+
+  return (
+    <div
+      role="tablist"
+      aria-label={`Period category ${scope}`}
+      className={`inline-flex items-stretch overflow-hidden rounded-xl border border-slate-200 bg-slate-100/80 p-0.5 ${
+        compact ? 'h-10 w-full' : 'h-9'
+      }`}
+    >
+      {items.map((item) => {
+        const selected = active === item.key;
+        const count = counts?.[item.key];
+        return (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            title={`${item.label} ${scope}`}
+            onClick={() => onChange?.(item.key)}
+            className={`inline-flex items-center justify-center gap-1 rounded-[0.6rem] px-2 text-[11px] font-semibold leading-none transition ${
+              compact ? 'min-h-0 flex-1' : 'min-h-0 whitespace-nowrap'
+            } ${
+              selected
+                ? item.key === 'needAction'
+                  ? 'bg-amber-50 text-amber-800 shadow-sm'
+                  : item.key === 'closed'
+                    ? 'bg-emerald-50 text-emerald-800 shadow-sm'
+                    : 'bg-white text-[#1E62F0] shadow-sm'
+                : 'text-slate-500 hover:bg-white/70 hover:text-slate-700'
+            }`}
+          >
+            <i className={`${item.icon} text-[13px]`} aria-hidden />
+            <span>{item.label}</span>
+            {Number.isFinite(count) ? (
+              <span className={`tabular-nums ${selected ? 'font-bold' : 'font-semibold text-slate-400'}`}>
+                {count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function DashboardDimensionFilters({
@@ -966,6 +1095,9 @@ function DashboardDimensionFilters({
   portfolioUserOptions = null,
   /** Hides Company / Business Functions / Function Type (UserHub tasks). */
   hideCompanyFunctionFilters = false,
+  periodCategoryCounts = null,
+  /** Keep the inline filter rail at md+ so 150%+ zoom does not drop to the mobile sheet. */
+  inlineFromMd = true,
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [draft, setDraft] = useState(filters);
@@ -1027,6 +1159,7 @@ function DashboardDimensionFilters({
       fyStartYear: draft?.periodFyStartYear ?? null,
       summaryLabel: draft?.periodLabel || 'All time',
     });
+    onChange('periodCategory', draft?.periodCategory || filters.periodCategory || 'created');
 
     if (typeof onPortfolioUserChange === 'function') {
       const draftUser = draft?.__portfolioUser ?? portfolioUserFilter;
@@ -1078,6 +1211,15 @@ function DashboardDimensionFilters({
       label: filters.periodLabel || 'Period',
       onRemove: () => onChange('period', getEmptyPeriodState()),
     });
+    const cat = normalizePeriodCategory(filters.periodCategory);
+    const scope = getPeriodCategoryScopeLabel(filters);
+    const catLabel =
+      cat === 'closed' ? `Closed ${scope}` : cat === 'needAction' ? `Need action ${scope}` : `Created ${scope}`;
+    chips.push({
+      key: 'periodCategory',
+      label: catLabel,
+      onRemove: () => onChange('periodCategory', 'created'),
+    });
   }
   if (portfolioUserFilter) {
     chips.push({
@@ -1087,19 +1229,32 @@ function DashboardDimensionFilters({
     });
   }
 
+  const mobileRailClass = inlineFromMd ? 'md:hidden' : 'lg:hidden';
+  const desktopRailClass = inlineFromMd
+    ? 'hidden md:flex md:flex-wrap md:justify-end md:overflow-visible'
+    : 'hidden lg:flex lg:flex-wrap lg:justify-end lg:overflow-visible';
+
   return (
-    <div className="flex w-full flex-col gap-1.5 lg:w-auto lg:items-end">
+    <div className={`flex w-full flex-col gap-1.5 ${inlineFromMd ? 'md:w-auto md:items-end' : 'lg:w-auto lg:items-end'}`}>
       {/* Mobile: compact Filters button + sheet */}
-      <div className="flex w-full flex-col gap-2 lg:hidden">
+      <div className={`flex w-full flex-col gap-2 ${mobileRailClass}`}>
         {prefix ? <div className="w-full">{prefix}</div> : null}
         <div className="flex w-full gap-2">
           <MobileFiltersButton count={activeCount} onClick={openSheet} />
         </div>
         <MobileActiveFilterChips chips={chips} />
+        {resolveDimensionCreatedRanges(filters).length > 0 ? (
+          <PeriodCategoryChips
+            compact
+            filters={filters}
+            counts={periodCategoryCounts}
+            onChange={(next) => onChange('periodCategory', next)}
+          />
+        ) : null}
       </div>
 
       {/* Desktop: original horizontal / wrap rail — unchanged */}
-      <div className="hidden w-full snap-x snap-mandatory items-end gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] lg:flex lg:flex-wrap lg:justify-end lg:overflow-visible [&::-webkit-scrollbar]:hidden">
+      <div className={`w-full snap-x snap-mandatory items-end gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] ${desktopRailClass} [&::-webkit-scrollbar]:hidden`}>
         {prefix}
         {fields.map(({ key, label, icon, allLabel }) => (
           <label key={key} className="flex min-w-[10.5rem] shrink-0 snap-start flex-col gap-1">
@@ -1136,6 +1291,19 @@ function DashboardDimensionFilters({
 
         {suffix}
 
+        {resolveDimensionCreatedRanges(filters).length > 0 ? (
+          <label className="flex shrink-0 snap-start flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              Category · {getPeriodCategoryScopeLabel(filters)}
+            </span>
+            <PeriodCategoryChips
+              filters={filters}
+              counts={periodCategoryCounts}
+              onChange={(next) => onChange('periodCategory', next)}
+            />
+          </label>
+        ) : null}
+
         {hasActiveFilters ? (
           <button
             type="button"
@@ -1148,8 +1316,8 @@ function DashboardDimensionFilters({
       </div>
 
       {hasActiveFilters ? (
-        <p className="hidden text-center text-[10px] font-medium text-slate-500 lg:block lg:text-right">
-          Portfolio filters applied across all sections · dates use project created date
+        <p className={`hidden text-center text-[10px] font-medium text-slate-500 ${inlineFromMd ? 'md:block md:text-right' : 'lg:block lg:text-right'}`}>
+          Portfolio filters applied across all sections · Period uses Created / Closed / Need action
         </p>
       ) : null}
 
@@ -1202,6 +1370,19 @@ function DashboardDimensionFilters({
             triggerClassName="rounded-xl bg-white py-2 shadow-sm text-xs min-h-[2.5rem]"
           />
         </MobileFilterField>
+        {resolveDimensionCreatedRanges(draft || filters).length > 0 ? (
+          <MobileFilterField label="Period category">
+            <PeriodCategoryChips
+              compact
+              filters={{
+                ...(draft || filters),
+                periodCategory: draft?.periodCategory || filters.periodCategory,
+              }}
+              counts={periodCategoryCounts}
+              onChange={(next) => setDraft((prev) => ({ ...prev, periodCategory: next }))}
+            />
+          </MobileFilterField>
+        ) : null}
         {Array.isArray(portfolioUserOptions) && typeof onPortfolioUserChange === 'function' ? (
           <MobileFilterField label="User">
             <PtSelect
@@ -1678,9 +1859,6 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, onC
               {trend.value}
             </p>
           ) : null}
-          <p className="mt-2 hidden text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100 lg:block">
-            Click to view →
-          </p>
         </div>
 
         <div
@@ -1848,7 +2026,7 @@ function HealthMonitorCard({
 const KPI_FOCUS = {
   'total-projects': { section: 'health', projectStatus: 'all', label: 'All projects' },
   'active-projects': { section: 'health', projectStatus: '__active__', label: 'Active projects' },
-  'completed-projects': { section: 'health', projectStatus: 'Completed', label: 'Completed projects' },
+  'completed-projects': { section: 'health', projectStatus: '__completed__', label: 'Completed projects' },
   'delayed-projects': { section: 'delay', delayType: 'delayed', label: 'Delayed projects' },
   'total-tasks': { section: 'subtasks', taskStatus: 'all', label: 'All tasks' },
   'open-tasks': { section: 'subtasks', taskStatus: '__open__', label: 'Open tasks' },
@@ -2282,27 +2460,6 @@ function ProgressCell({ value, compact }) {
   );
 }
 
-const dashboardRowCreateLock = new Set();
-
-/** Business project id (e.g. PRJ-...) for Project_ID_Hidden — not Kissflow board _id. */
-function resolveProjectBusinessId(project) {
-  const displayId = String(project?.displayId ?? '').trim();
-  if (displayId && !displayId.startsWith('Pk')) return displayId;
-
-  const candidates = [
-    project?.raw?.Project_ID,
-    project?.raw?.Project_Code,
-    project?.Project_ID,
-    project?.Project_Code,
-  ];
-  for (const candidate of candidates) {
-    const value = String(typeof candidate === 'object' ? (candidate?.Project_ID || candidate?._item_id || '') : candidate ?? '').trim();
-    if (value && !value.startsWith('Pk')) return value;
-  }
-
-  return displayId || String(project?.id ?? '').trim();
-}
-
 function formatProjectRef(displayId, rowId) {
   const raw = String(displayId ?? rowId ?? '').trim();
   if (!raw) return 'Task-NA';
@@ -2316,8 +2473,8 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
   const [ownerFilter, setOwnerFilter] = useState('all');
   const [nameFilter, setNameFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
+  const [sortKey, setSortKey] = useState('createdAt');
+  const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState(null);
 
@@ -2381,6 +2538,8 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
         if (ragFilter !== 'all' && row.rag !== ragFilter) return false;
         if (statusFilter === '__active__') {
           if (isProjectClosed(row.status)) return false;
+        } else if (statusFilter === '__completed__' || statusFilter === 'Completed') {
+          if (!isProjectClosed(row.status)) return false;
         } else if (statusFilter !== 'all' && row.status !== statusFilter) {
           return false;
         }
@@ -2430,8 +2589,10 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
           return dir * (ragRank(a.rag) - ragRank(b.rag));
         case 'status':
           return dir * String(a.status || '').localeCompare(String(b.status || ''), undefined, { sensitivity: 'base' });
+        case 'createdAt':
+          return compareCreatedAt(a, b, dir, sortDir);
         default:
-          return 0;
+          return compareCreatedAt(a, b, -1, 'desc');
       }
     });
     return copy;
@@ -2508,6 +2669,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
       filterOptions: [
         { value: 'all', label: 'All Status' },
         { value: '__active__', label: 'Active (not completed)' },
+        { value: '__completed__', label: 'Completed (closed)' },
         ...statuses.map((s) => ({ value: s, label: s })),
       ],
     },
@@ -2558,7 +2720,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
     statusFilter !== 'all'
       ? {
           key: 'status',
-          label: statusFilter === '__active__' ? 'Active' : statusFilter,
+          label: statusFilter === '__active__' ? 'Active' : (statusFilter === '__completed__' || statusFilter === 'Completed') ? 'Completed' : statusFilter,
           onRemove: () => setStatusFilter('all'),
         }
       : null,
@@ -2650,6 +2812,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
               options={[
                 { value: 'all', label: 'All Status' },
                 { value: '__active__', label: 'Active (not completed)' },
+                { value: '__completed__', label: 'Completed (closed)' },
                 ...statuses.map((s) => ({ value: s, label: s })),
               ]}
             />
@@ -2697,6 +2860,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
             options={[
               { value: 'all', label: 'All Status' },
               { value: '__active__', label: 'Active (not completed)' },
+              { value: '__completed__', label: 'Completed (closed)' },
               ...statuses.map((s) => ({ value: s, label: s })),
             ]}
           />
@@ -3021,7 +3185,7 @@ function getTasksLinkedToProject(project, allTasks) {
   const pname = String(project?.name ?? '').trim();
   if (!pid && !pref && !pname) return [];
 
-  return rows.filter((t) => {
+  const linked = rows.filter((t) => {
     const tPid = String(
       t?.projectId ??
         t?.raw?.Project_ID?._item_id ??
@@ -3039,6 +3203,7 @@ function getTasksLinkedToProject(project, allTasks) {
       || (pref && tPref && tPref === pref)
       || (pname && tName && tName === pname);
   });
+  return sortByCreatedAtDesc(linked);
 }
 
 /** All tasks linked to any project in the list (deduped). */
@@ -3503,12 +3668,6 @@ function TaskDetailFormView({ row, viewerName = 'User', isSubtask = false }) {
                 key={rev.key || `${rev.date}-${idx}`}
                 className="rounded-lg border border-slate-200/90 bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] text-slate-600">
-                    Updated on: <span className="font-medium text-slate-800">{rev.date || '—'}</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500">{rev.revisedBy || 'System'}</p>
-                </div>
                 <RevisionChangeLines rev={rev} />
               </div>
             ))}
@@ -3734,12 +3893,6 @@ function DelayRevisionDetailView({ row }) {
                 key={rev.key || `${rev.date}-${idx}`}
                 className="rounded-lg border border-slate-200/90 bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] text-slate-600">
-                    Updated on: <span className="font-medium text-slate-800">{rev.date || '—'}</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500">{rev.revisedBy || 'System'}</p>
-                </div>
                 <RevisionChangeLines rev={rev} />
               </div>
             ))}
@@ -3773,7 +3926,7 @@ function DashboardDetailModal({ detail, onClose, viewerName = 'User', onOpenKiss
   const isSubtask = type === 'subtask';
   const isTaskLike = isTask || isSubtask;
   const row = detail?.row;
-  const canOpenKissflow = isTask && typeof onOpenKissflowForm === 'function';
+  const canOpenKissflow = typeof onOpenKissflowForm === 'function';
 
   return createPortal(
     <AnimatePresence>
@@ -3840,7 +3993,7 @@ function DashboardDetailModal({ detail, onClose, viewerName = 'User', onOpenKiss
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-[#1E88E5] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1565C0]"
                   >
                     <i className="ri-external-link-line" aria-hidden />
-                    Open form
+                    Open record
                   </button>
                 ) : null}
               </div>
@@ -3910,8 +4063,8 @@ function SubtaskTable({
   const [projectFilter, setProjectFilter] = useState('all');
   const [taskNameFilter, setTaskNameFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
-  const [sortKey, setSortKey] = useState('taskName');
-  const [sortDir, setSortDir] = useState('asc');
+  const [sortKey, setSortKey] = useState('createdAt');
+  const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
   const [expandedTaskIds, setExpandedTaskIds] = useState(() => new Set());
 
@@ -4042,8 +4195,10 @@ function SubtaskTable({
           return compareNumber(a.delayDays, b.delayDays, dir);
         case 'status':
           return compareText(a.status, b.status, dir);
+        case 'createdAt':
+          return compareCreatedAt(a, b, dir, sortDir);
         default:
-          return 0;
+          return compareCreatedAt(a, b, -1, 'desc');
       }
     });
     return copy;
@@ -5010,14 +5165,111 @@ function ProjectDrillDownPanel({
 }) {
   const [activeTab, setActiveTab] = useState('subtasks');
   const [creatingTask, setCreatingTask] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportMenuRef = useRef(null);
 
   useEffect(() => {
     setActiveTab('subtasks');
+    setExportOpen(false);
   }, [project?.id]);
+
+  useEffect(() => {
+    if (!exportOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+        setExportOpen(false);
+      }
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setExportOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [exportOpen]);
 
   const rows = Array.isArray(allTasks) ? allTasks : [];
   const linkedTasks = getTasksLinkedToProject(project, rows);
   const canCreateTask = typeof onCreateTaskPopup === 'function' && !isProjectClosed(project?.status);
+
+  const handleExport = useCallback(
+    async (kind) => {
+      if (exporting) return;
+      setExporting(true);
+      setExportOpen(false);
+      try {
+        const bundle = collectProjectExportRows(
+          project,
+          linkedTasks,
+          allProcessSubtasks,
+          filterSubtasksForTask,
+          resolveTaskBusinessIdFromRow,
+        );
+        await exportProjectAccordion(kind, bundle);
+      } catch (error) {
+        console.warn('Project accordion export failed:', error);
+        const message =
+          error?.message ||
+          (kind === 'png'
+            ? 'PNG export failed. Try Excel (CSV) for large projects.'
+            : 'Export failed. Please try again.');
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(message);
+        }
+      } finally {
+        setExporting(false);
+      }
+    },
+    [allProcessSubtasks, exporting, linkedTasks, project],
+  );
+
+  const exportButton = (
+    <div ref={exportMenuRef} className="relative w-full min-w-0 lg:w-auto">
+      <button
+        type="button"
+        disabled={exporting}
+        aria-expanded={exportOpen}
+        aria-haspopup="menu"
+        onClick={() => setExportOpen((open) => !open)}
+        className="inline-flex h-9 w-full shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-[#2C3E50] shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
+      >
+        <i className={`ri-download-2-line ${exporting ? 'animate-pulse' : ''}`} aria-hidden />
+        {exporting ? 'Exporting…' : 'Export'}
+        <i className={`ri-arrow-down-s-line text-sm transition-transform ${exportOpen ? 'rotate-180' : ''}`} aria-hidden />
+      </button>
+      {exportOpen ? (
+        <div
+          role="menu"
+          className="z-[80] mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg lg:absolute lg:right-0 lg:w-auto lg:min-w-[12.5rem]"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => handleExport('png')}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 lg:py-2 lg:text-[11px]"
+          >
+            <i className="ri-image-line text-base text-[#1E88E5]" aria-hidden />
+            PNG image
+            <span className="ml-auto text-[10px] font-medium text-slate-400">multi-page if large</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => handleExport('csv')}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 lg:py-2 lg:text-[11px]"
+          >
+            <i className="ri-file-excel-2-line text-base text-[#43A047]" aria-hidden />
+            Excel (CSV)
+            <span className="ml-auto text-[10px] font-medium text-slate-400">best for 500+</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 
   if (!project) return null;
 
@@ -5088,25 +5340,28 @@ function ProjectDrillDownPanel({
               refreshing={refreshingTasks}
               countLabel={(n) => `${n} task${n === 1 ? '' : 's'} assigned to this project`}
               headerActions={
-                canCreateTask ? (
-                <button
-                  type="button"
-                  disabled={creatingTask}
-                  onClick={async () => {
-                    if (creatingTask || typeof onCreateTaskPopup !== 'function') return;
-                    setCreatingTask(true);
-                    try {
-                      await onCreateTaskPopup(project);
-                    } finally {
-                      setCreatingTask(false);
-                    }
-                  }}
-                  className="inline-flex w-full min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-2xl sm:text-xs lg:w-auto"
-                >
-                  <i className="ri-add-line" aria-hidden />
-                  {creatingTask ? 'Creating…' : 'Create task'}
-                </button>
-                ) : null
+                <div className="flex w-full items-start gap-1.5 lg:w-auto lg:shrink-0 lg:items-center">
+                  {exportButton}
+                  {canCreateTask ? (
+                    <button
+                      type="button"
+                      disabled={creatingTask}
+                      onClick={async () => {
+                        if (creatingTask || typeof onCreateTaskPopup !== 'function') return;
+                        setCreatingTask(true);
+                        try {
+                          await onCreateTaskPopup(project);
+                        } finally {
+                          setCreatingTask(false);
+                        }
+                      }}
+                      className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 self-start rounded-xl bg-[#1E88E5] px-2.5 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <i className="ri-add-line" aria-hidden />
+                      {creatingTask ? 'Creating…' : 'Create task'}
+                    </button>
+                  ) : null}
+                </div>
               }
             />
           </div>
@@ -5130,13 +5385,6 @@ function ProjectDrillDownPanel({
                         style={{ boxShadow: '0 0 0 2px #FB8C00' }}
                       />
                       <div className="rounded-xl border border-orange-100 bg-orange-50/40 p-4">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-[#FB8C00]">Revision #{idx + 1}</span>
-                          <span className="text-xs text-[#7F8C8D]">{rev.revisedBy || 'System'}</span>
-                        </div>
-                        <p className="mb-2 text-xs text-slate-600">
-                          Updated on: <span className="font-medium text-slate-800">{rev.date || '—'}</span>
-                        </p>
                         <RevisionChangeLines rev={rev} />
                       </div>
                     </div>
@@ -5247,6 +5495,7 @@ function DashboardPagePremium({
   const [apiSubtaskData, setApiSubtaskData] = useState([]);
   const [apiProcessSubtaskData, setApiProcessSubtaskData] = useState([]);
   const [refreshingTasks, setRefreshingTasks] = useState(false);
+  const [kissflowSync, setKissflowSync] = useState({ status: 'idle', message: '' });
   /** User dashboard only: Me = my work, My Team = manager report (same as UserSpecificPT). */
   const [userViewScope, setUserViewScope] = useState('Me');
   const [selectedTeamMember, setSelectedTeamMember] = useState('');
@@ -5271,6 +5520,7 @@ function DashboardPagePremium({
       periodRanges: [],
       periodParts: [],
       periodFyStartYear: null,
+      periodCategory: 'created',
       createdYear: '',
       createdPeriod: '',
     };
@@ -5302,28 +5552,31 @@ function DashboardPagePremium({
     if (typeof onOpenTaskRow === 'function' && onOpenTaskRow(row, kfInstance) !== false) {
       return true;
     }
-    return openPmRecord('task', row);
+    setDetailModal({ type: 'task', row });
+    return true;
   }, [onOpenTaskRow, kfInstance]);
 
   const handleOpenSubtaskDetail = useCallback((row) => {
     if (!row) return false;
-    if (typeof onOpenSubtaskRow === 'function') {
-      return onOpenSubtaskRow(row, kfInstance) !== false;
+    if (typeof onOpenSubtaskRow === 'function' && onOpenSubtaskRow(row, kfInstance) !== false) {
+      return true;
     }
-    return openPmRecord('subtask', row);
+    setDetailModal({ type: 'subtask', row });
+    return true;
   }, [onOpenSubtaskRow, kfInstance]);
 
   const handleOpenProjectDetail = useCallback((row) => {
     if (!row) return false;
-    if (typeof onOpenProjectRow === 'function') {
-      return onOpenProjectRow(row, kfInstance) !== false;
+    if (typeof onOpenProjectRow === 'function' && onOpenProjectRow(row, kfInstance) !== false) {
+      return true;
     }
-    return openPmRecord('project', row);
+    setDetailModal({ type: 'project', row });
+    return true;
   }, [onOpenProjectRow, kfInstance]);
 
   const handleOpenDelayDetail = useCallback((row) => {
     if (!row) return;
-    openPmRecord('project', row);
+    setDetailModal({ type: 'project', row });
   }, []);
 
   const handleCloseDetailModal = useCallback(() => {
@@ -5344,110 +5597,25 @@ function DashboardPagePremium({
   }, [reloadDashboardData]);
 
   const handleCreateTaskForProject = useCallback(
-    async (project) => {
+    (project) => {
       if (isProjectClosed(project?.status)) {
-      const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-        sdk?.client?.showInfo?.('Cannot add a task to a closed project.');
+        window.alert('Cannot add a task to a closed project.');
         return false;
       }
-
-      const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-      if (!sdk) {
-        console.warn('Create task: Kissflow SDK not available');
-        return false;
-      }
-
-      const projectId = resolveProjectBusinessId(project);
-      if (!projectId) {
-        sdk?.client?.showInfo?.('Missing project id on this row (expected e.g. PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `proj-${project?.id ?? projectId}`;
-      if (dashboardRowCreateLock.has(lockKey)) return false;
-
-      dashboardRowCreateLock.add(lockKey);
-      try {
-        const created = await createTaskInstance(sdk, projectId);
-        void openTaskDraft(sdk, created.instanceId, created.activityInstanceId)
-          .then(() => reloadDashboardData())
-          .catch((openError) => {
-            console.warn('Open task draft failed:', openError);
-            sdk?.client?.showInfo?.(openError?.message || 'Failed to open task form.');
-          });
-        return true;
-      } catch (error) {
-        console.warn('Create task failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create task.');
-        return false;
-      } finally {
-        dashboardRowCreateLock.delete(lockKey);
-      }
+      return goPmNewTask(project);
     },
-    [kfInstance, reloadDashboardData],
+    [],
   );
 
   const handleCreateSubtaskForTask = useCallback(
-    async (taskRow) => {
+    (taskRow) => {
       if (isTaskCompleted(taskRow?.status)) {
-        const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-        sdk?.client?.showInfo?.('Cannot add a subtask to a completed task.');
+        window.alert('Cannot add a subtask to a completed task.');
         return false;
       }
-
-      const sdk = kfInstance ?? ((typeof kf !== 'undefined' ? kf : null) ?? (typeof window !== 'undefined' ? window.kf : null));
-      if (!sdk) {
-        console.warn('Create subtask: Kissflow SDK not available');
-        return false;
-      }
-
-      // Hub myitems/pending often omit Subtaxk_id — resolve or fetch once from instance.
-      const taskId = await ensureTaskBusinessIdForCreate(sdk, taskRow);
-      if (!taskId) {
-        sdk?.client?.showInfo?.('Missing task id on this row (expected e.g. Task-PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `task-${taskRow?.id ?? taskId}`;
-      if (dashboardRowCreateLock.has(lockKey)) return false;
-
-      dashboardRowCreateLock.add(lockKey);
-      try {
-        const created = await createSubtaskInstance(sdk, taskId);
-        const draftRow = {
-          InstanceID: created.instanceId,
-          ActivityID: created.activityInstanceId,
-          id: created.instanceId,
-          _id: created.instanceId,
-          _activity_instance_id: created.activityInstanceId,
-        };
-
-        // UserHubTasks: Popup_WbcLURdUXx; elsewhere: process openForm.
-        if (typeof onOpenSubtaskRow === 'function') {
-          const opened = onOpenSubtaskRow(draftRow, kfInstance);
-          if (opened === false) {
-            sdk?.client?.showInfo?.('Subtask created but the form could not be opened.');
-          }
-          void reloadDashboardData();
-          return true;
-        }
-
-        void openSubtaskDraft(sdk, created.instanceId, created.activityInstanceId)
-          .then(() => reloadDashboardData())
-          .catch((openError) => {
-            console.warn('Open subtask draft failed:', openError);
-            sdk?.client?.showInfo?.(openError?.message || 'Failed to open subtask form.');
-          });
-        return true;
-      } catch (error) {
-        console.warn('Create subtask failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create subtask.');
-        return false;
-      } finally {
-        dashboardRowCreateLock.delete(lockKey);
-      }
+      return goPmNewSubtask(taskRow);
     },
-    [kfInstance, reloadDashboardData, onOpenSubtaskRow],
+    [],
   );
 
   /** Offset by sticky header height so section titles aren't hidden under the bar */
@@ -5505,10 +5673,33 @@ function DashboardPagePremium({
           setApiProcessSubtaskData([]);
         }
       }
+      if (cancelled || lightHubTasksMode) return;
+      setKissflowSync({ status: 'running', message: 'Syncing latest projects, tasks and subtasks…' });
+      try {
+        const result = await syncPmFromKissflow();
+        if (cancelled) return;
+        const payload = result?.payload || {};
+        const source = payload.source || 'Kissflow';
+        setKissflowSync({
+          status: 'done',
+          message: `Updated from ${source}: ${payload.projects ?? 0} projects, ${payload.tasks ?? 0} tasks, ${payload.subtasks ?? 0} subtasks`,
+        });
+        await reloadDashboardData();
+        window.setTimeout(() => {
+          if (!cancelled) setKissflowSync((prev) => (prev.status === 'done' ? { status: 'idle', message: '' } : prev));
+        }, 6000);
+      } catch (error) {
+        if (cancelled) return;
+        console.warn('Kissflow production sync failed:', error?.message || error);
+        setKissflowSync({
+          status: 'error',
+          message: error?.message || 'Could not sync latest Kissflow records',
+        });
+      }
     }
     run();
     return () => { cancelled = true; };
-  }, [reloadDashboardData]);
+  }, [reloadDashboardData, lightHubTasksMode]);
 
   // User dashboard → My Team projects (same report as UserSpecificPT).
   useEffect(() => {
@@ -5718,10 +5909,15 @@ function DashboardPagePremium({
     [scopedPortfolio.projects],
   );
 
-  /** Apply company / function / year first — User options and User filter hang off this set. */
-  const dimensionFilteredProjects = useMemo(
-    () => filterProjectsByDimensions(scopedPortfolio.projects, dimensionFilters),
+  /** Company / function first — period categories hang off this set so Closed/Need action stay visible. */
+  const companyFilteredProjects = useMemo(
+    () => filterProjectsByPortfolioDims(scopedPortfolio.projects, dimensionFilters),
     [scopedPortfolio.projects, dimensionFilters],
+  );
+
+  const dimensionFilteredProjects = useMemo(
+    () => applyPeriodCategoryFilter(companyFilteredProjects, dimensionFilters),
+    [companyFilteredProjects, dimensionFilters],
   );
 
   const effectiveTaskRows = useMemo(() => {
@@ -5729,14 +5925,35 @@ function DashboardPagePremium({
     return scopedPortfolio.tasks;
   }, [overrideTasks, scopedPortfolio.tasks]);
 
-  const dimensionFilteredTasks = useMemo(
-    () => filterTasksByProjects(effectiveTaskRows, dimensionFilteredProjects, dimensionFilters),
-    [effectiveTaskRows, dimensionFilteredProjects, dimensionFilters],
+  const companyFilteredTasks = useMemo(
+    () => filterTasksLinkedToProjects(effectiveTaskRows, companyFilteredProjects, dimensionFilters),
+    [effectiveTaskRows, companyFilteredProjects, dimensionFilters],
   );
 
+  const dimensionFilteredTasks = useMemo(
+    () => applyPeriodCategoryFilter(companyFilteredTasks, dimensionFilters),
+    [companyFilteredTasks, dimensionFilters],
+  );
+
+  const periodCategoryCounts = useMemo(() => {
+    if (!resolveDimensionCreatedRanges(dimensionFilters).length) return null;
+    const projectRows = companyFilteredProjects;
+    const taskRows = companyFilteredTasks;
+    const countFor = (category) => {
+      const projects = countPeriodCategoryMatches(projectRows, dimensionFilters, category);
+      const tasks = countPeriodCategoryMatches(taskRows, dimensionFilters, category);
+      return contentView === 'tasks' ? tasks : projects;
+    };
+    return {
+      created: countFor('created'),
+      closed: countFor('closed'),
+      needAction: countFor('needAction'),
+    };
+  }, [companyFilteredProjects, companyFilteredTasks, dimensionFilters, contentView]);
+
   const dimensionFilteredProcessSubtasks = useMemo(
-    () => filterProcessSubtasksByTasks(scopedPortfolio.processSubtasks, dimensionFilteredTasks, dimensionFilters),
-    [scopedPortfolio.processSubtasks, dimensionFilteredTasks, dimensionFilters],
+    () => filterProcessSubtasksByTasks(scopedPortfolio.processSubtasks, companyFilteredTasks, dimensionFilters),
+    [scopedPortfolio.processSubtasks, companyFilteredTasks, dimensionFilters],
   );
 
   /** Owners + assignees only from dimension-filtered projects/tasks. */
@@ -5784,17 +6001,19 @@ function DashboardPagePremium({
   }, [overrideTasksForMetrics, effectiveTaskRows]);
 
   const filteredMetricsSubtaskData = useMemo(() => {
-    const byDimension = filterTasksByProjects(
+    const linked = filterTasksLinkedToProjects(
       effectiveMetricsTaskRows,
-      dimensionFilteredProjects,
+      companyFilteredProjects,
       dimensionFilters,
     );
+    const byDimension = applyPeriodCategoryFilter(linked, dimensionFilters);
     if (!showPortfolioUserFilter || !portfolioUserFilter) return byDimension;
     const member = portfolioUsers.find((m) => m.name === portfolioUserFilter);
     if (!member) return byDimension;
     return filterPortfolioByUser(dimensionFilteredProjects, byDimension, [], member).tasks;
   }, [
     effectiveMetricsTaskRows,
+    companyFilteredProjects,
     dimensionFilteredProjects,
     dimensionFilters,
     showPortfolioUserFilter,
@@ -5885,6 +6104,7 @@ function DashboardPagePremium({
           // Clear legacy year/period selects when using the adaptive picker.
           createdYear: '',
           createdPeriod: '',
+          periodCategory: prev.periodCategory || 'created',
         };
       }
       const next = { ...prev, [key]: value };
@@ -5913,6 +6133,7 @@ function DashboardPagePremium({
       periodRanges: [],
       periodParts: [],
       periodFyStartYear: null,
+      periodCategory: 'created',
       createdYear: '',
       createdPeriod: '',
     });
@@ -5951,6 +6172,7 @@ function DashboardPagePremium({
     onPortfolioUserChange: showPortfolioUserFilter ? setPortfolioUserFilter : null,
     portfolioUserOptions: portfolioUserSelectOptions,
     hideCompanyFunctionFilters,
+    periodCategoryCounts,
   };
 
   const totalProjects = filteredProjectData.length;
@@ -6188,6 +6410,30 @@ function DashboardPagePremium({
           </div>
         )}
 
+        {kissflowSync.status !== 'idle' && kissflowSync.message ? (
+          <div
+            className={`mb-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold sm:text-xs ${
+              kissflowSync.status === 'error'
+                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                : kissflowSync.status === 'done'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-slate-200 bg-white text-slate-600'
+            }`}
+          >
+            <i
+              className={
+                kissflowSync.status === 'running'
+                  ? 'ri-loader-4-line animate-spin'
+                  : kissflowSync.status === 'error'
+                    ? 'ri-error-warning-line'
+                    : 'ri-checkbox-circle-line'
+              }
+              aria-hidden
+            />
+            {kissflowSync.message}
+          </div>
+        ) : null}
+
         <div className="space-y-4 lg:space-y-6">
           {(contentView === 'all' || contentView === 'projects') && (
           <motion.section
@@ -6308,16 +6554,14 @@ function DashboardPagePremium({
                   : null
               }
               headerActions={
-                typeof onCreateProjectRecord === 'function' ? (
-                  <button
-                    type="button"
-                    onClick={() => onCreateProjectRecord()}
-                    className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
-                  >
-                    <i className="ri-add-line" aria-hidden />
-                    Create project
-                  </button>
-                ) : null
+                <button
+                  type="button"
+                  onClick={() => (typeof onCreateProjectRecord === 'function' ? onCreateProjectRecord() : goPmNewProject())}
+                  className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
+                >
+                  <i className="ri-add-line" aria-hidden />
+                  Create project
+                </button>
               }
             />
           </motion.section>
@@ -6363,16 +6607,14 @@ function DashboardPagePremium({
                     getRowSelectId={getTaskRowSelectId}
                     hideTaskIds={overrideTasks != null}
                     headerActions={
-                      typeof onCreateTaskRecord === 'function' ? (
-                        <button
-                          type="button"
-                          onClick={() => onCreateTaskRecord()}
-                          className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
-                        >
-                          <i className="ri-add-line" aria-hidden />
-                          Create task
-                        </button>
-                      ) : null
+                      <button
+                        type="button"
+                        onClick={() => (typeof onCreateTaskRecord === 'function' ? onCreateTaskRecord() : goPm('/tasks/new'))}
+                        className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
+                      >
+                        <i className="ri-add-line" aria-hidden />
+                        Create task
+                      </button>
                     }
                     insightFilter={
                       insightFocus?.section === 'subtasks'
@@ -6416,7 +6658,7 @@ function DashboardPagePremium({
           detail={detailModal}
           onClose={handleCloseDetailModal}
           viewerName={userName}
-          onOpenKissflowForm={typeof onOpenTaskRow === 'function' ? (row) => onOpenTaskRow(row, kfInstance) : null}
+          onOpenKissflowForm={(row) => openPmRecord(detailModal?.type || 'project', row)}
         />
 
       </div>

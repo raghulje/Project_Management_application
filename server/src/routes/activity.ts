@@ -22,7 +22,7 @@ activityRouter.get('/', async (req, res) => {
   if (!item_type || !item_id) return fail(res, 'item_type and item_id required')
   const [comments, files, assignees] = await Promise.all([
     all(`SELECT * FROM record_comments WHERE item_type = ? AND item_id = ? ORDER BY id ASC`, [item_type, item_id]),
-    all(`SELECT id, item_type, item_id, file_name, mime_type, size_bytes, created_by_name, created_at
+    all(`SELECT id, item_type, item_id, kind, file_name, mime_type, size_bytes, created_by_name, created_at
          FROM record_files WHERE item_type = ? AND item_id = ? ORDER BY id DESC`, [item_type, item_id]),
     all(`SELECT * FROM record_assignees WHERE item_type = ? AND item_id = ? ORDER BY id ASC`, [item_type, item_id]),
   ])
@@ -82,14 +82,26 @@ activityRouter.post('/files', (req, res) => {
     const file = req.file
     const item_type = String(req.body?.item_type || '')
     const item_id = Number(req.body?.item_id)
+    const kind = String(req.body?.kind || '').trim() || null
     if (!file || !item_type || !item_id) return fail(res, 'File, item_type and item_id required')
     const ts = now()
+    if (kind) {
+      const prev = await all<{ id: number; stored_name: string }>(
+        `SELECT id, stored_name FROM record_files WHERE item_type = ? AND item_id = ? AND kind = ?`,
+        [item_type, item_id, kind],
+      )
+      for (const row of prev) {
+        const full = path.join(storageRoot, 'private_uploads/records', row.stored_name)
+        try { fs.unlinkSync(full) } catch { /* ignore */ }
+        await run(`DELETE FROM record_files WHERE id = ?`, [row.id])
+      }
+    }
     const info = await run(
-      `INSERT INTO record_files (item_type, item_id, file_name, stored_name, mime_type, size_bytes, created_by_user_id, created_by_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [item_type, item_id, file.originalname, file.filename, file.mimetype, file.size, req.user?.id ?? null, actor(req.user), ts],
+      `INSERT INTO record_files (item_type, item_id, kind, file_name, stored_name, mime_type, size_bytes, created_by_user_id, created_by_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item_type, item_id, kind, file.originalname, file.filename, file.mimetype, file.size, req.user?.id ?? null, actor(req.user), ts],
     )
-    const row = await get(`SELECT id, item_type, item_id, file_name, mime_type, size_bytes, created_by_name, created_at FROM record_files WHERE id = ?`, [info.insertId])
+    const row = await get(`SELECT id, item_type, item_id, kind, file_name, mime_type, size_bytes, created_by_name, created_at FROM record_files WHERE id = ?`, [info.insertId])
     return okMessage(res, 'File uploaded', row, 201)
   })
 })

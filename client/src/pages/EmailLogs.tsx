@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { useDebounced } from '../lib/useDebounced'
-import { Alert, EmptyState, Insights, PageHead, Pill } from './AdminKit'
+import { Alert } from './AdminKit'
+import { FrChips, FrHeader, FrPage, FrPanel } from './FormReference'
 
 type Log = {
   id: number
@@ -15,13 +16,6 @@ type Log = {
   created_at?: string
   sent_at?: string | null
   message_id?: string | null
-}
-
-function tone(s: string): 'green' | 'rose' | 'amber' | 'blue' | 'slate' {
-  if (s === 'sent') return 'green'
-  if (s === 'failed') return 'rose'
-  if (s === 'queued') return 'blue'
-  return 'amber'
 }
 
 export function EmailLogsPage() {
@@ -57,39 +51,35 @@ export function EmailLogsPage() {
   const failed = rows.filter((r) => r.status === 'failed').length
 
   return (
-    <div className="ak">
-      <PageHead title="Email logs" subtitle={`${total} notification send records`} backTo="/settings/notifications" backLabel="Notification settings" />
-      <Insights cards={[
-        { label: 'Records', value: total, icon: 'ri-mail-line', tone: 'blue' },
-        { label: 'Sent (page)', value: sent, icon: 'ri-check-line', tone: 'green' },
-        { label: 'Failed (page)', value: failed, icon: 'ri-error-warning-line', tone: 'rose' },
-      ]} />
+    <FrPage>
+      <FrHeader kicker="Notification settings" kickerTo="/settings/notifications" title="Email logs" count={`${total} total records`}>
+        <input className="fr-search" placeholder="Search records..." value={q} onChange={(e) => setQ(e.target.value)} />
+      </FrHeader>
+      <FrChips
+        items={[
+          { label: 'All', count: total, value: '' },
+          { label: 'Sent', count: sent, value: 'sent' },
+          { label: 'Failed', count: failed, value: 'failed' },
+        ]}
+        value={status}
+        onChange={setStatus}
+      />
       {err ? <Alert kind="err">{err}</Alert> : null}
       {msg ? <Alert kind="ok">{msg}</Alert> : null}
-      <div className="pm-card">
-        <div className="pm-toolbar">
-          <input placeholder="Search subject, to, code" value={q} onChange={(e) => setQ(e.target.value)} />
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="sent">Sent</option>
-            <option value="failed">Failed</option>
-            <option value="skipped">Skipped</option>
-            <option value="queued">Queued</option>
-          </select>
-        </div>
-        <div className="ak-table-wrap">
-          <table className="pm-table">
+      <FrPanel>
+        <div className="fr-table-wrap">
+          <table className="fr-table">
             <thead>
               <tr><th>When</th><th>Status</th><th>Type</th><th>Project / Task</th><th>To</th><th>Subject</th><th /></tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={7}><EmptyState icon="ri-mail-line" title="No logs yet" text="Create or edit a record to generate one." /></td></tr>
+                <tr><td colSpan={7} className="fr-empty">No records found</td></tr>
               ) : rows.map((r) => (
                 <Fragment key={r.id}>
                   <tr className="is-clickable" onClick={() => setOpen(open === r.id ? null : r.id)}>
                     <td>{String(r.created_at || '').replace('T', ' ').slice(0, 19)}</td>
-                    <td><Pill tone={tone(r.status)}>{r.status}</Pill></td>
+                    <td><span className={`ws-pri ${r.status === 'sent' ? 'done' : r.status === 'failed' ? 'hold' : 'run'}`}>{r.status}</span></td>
                     <td>{r.email_type}</td>
                     <td>{[r.project_code, r.task_code].filter(Boolean).join(' / ') || '—'}</td>
                     <td>{String(r.to_addresses || '').slice(0, 48)}</td>
@@ -115,7 +105,7 @@ export function EmailLogsPage() {
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
+      </FrPanel>
+    </FrPage>
   )
 }

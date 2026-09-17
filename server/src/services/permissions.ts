@@ -60,6 +60,7 @@ export function viewerPerms(): Record<string, string> {
 export function employeePerms(): Record<string, string> {
   return {
     'projects.view': '1',
+    'projects.edit': '1',
     'tasks.view': '1',
     'tasks.create': '1',
     'tasks.edit': '1',
@@ -174,12 +175,23 @@ export async function ensureDefaultRoles() {
   ]
 
   for (const d of defaults) {
-    const existing = await get<{ id: number }>(`SELECT id FROM permission_groups WHERE name = ?`, [d.name])
+    const existing = await get<{ id: number; permissions: unknown }>(`SELECT id, permissions FROM permission_groups WHERE name = ?`, [d.name])
     if (!existing) {
       await run(
         `INSERT INTO permission_groups (name, permissions, created_at, updated_at) VALUES (?, ?, ?, ?)`,
         [d.name, JSON.stringify(d.permissions), ts, ts],
       )
+    } else if (d.name === 'Employee') {
+      const current = parsePerms(existing.permissions)
+      const next = { ...current, ...d.permissions }
+      const changed = Object.keys(d.permissions).some((k) => !isTruthyPerm(current[k]))
+      if (changed) {
+        await run(`UPDATE permission_groups SET permissions = ?, updated_at = ? WHERE id = ?`, [
+          JSON.stringify(next), ts, existing.id,
+        ])
+        const members = await all<{ user_id: number }>(`SELECT user_id FROM users_groups WHERE group_id = ?`, [existing.id])
+        for (const m of members) await syncUserPermissions(m.user_id)
+      }
     }
   }
 

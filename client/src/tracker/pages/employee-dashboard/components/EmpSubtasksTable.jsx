@@ -1,19 +1,12 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { EMP_MOTION } from '../motion';
+import PtSelect from '../../../components/PtSelect.jsx';
 
 const priorityConfig = {
   High: { bg: '#FEF2F2', color: '#E53935', label: 'High' },
   Medium: { bg: '#FFFBEB', color: '#FB8C00', label: 'Medium' },
   Low: { bg: '#F0FDF4', color: '#43A047', label: 'Low' },
-};
-
-const statusConfig = {
-  'Not Started': { bg: '#F8FAFC', color: '#64748B', label: 'Not Started' },
-  'In Progress': { bg: '#EFF6FF', color: '#1E88E5', label: 'In Progress' },
-  Completed: { bg: '#F0FDF4', color: '#43A047', label: 'Completed' },
-  Overdue: { bg: '#FEF2F2', color: '#E53935', label: 'Overdue' },
-  Pending: { bg: '#F8FAFC', color: '#64748B', label: 'Not Started' },
 };
 
 function formatDate(d) {
@@ -124,7 +117,6 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }) 
             ) : (
               filtered.map((t, i) => {
                 const pri = priorityConfig[t.priority] || priorityConfig.Medium;
-                const st = statusConfig[t.status] || statusConfig['Not Started'];
                 const isCompleted = t.status === 'Completed';
                 return (
                   <motion.tr
@@ -157,18 +149,19 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }) 
                         {t.agingDays > 0 ? `${t.agingDays}d` : '—'}
                       </span>
                     </td>
-                    <td className="px-5 py-3">
-                      <select
+                    <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
+                      <PtSelect
                         value={t.status === 'Pending' ? 'Not Started' : t.status}
                         onChange={(e) => onStatusChange(t.id, e.target.value)}
-                        className="cursor-pointer rounded-lg border-0 px-2 py-1.5 text-xs font-medium outline-none"
-                        style={{ background: st.bg, color: st.color, fontFamily: 'inherit' }}
-                      >
-                        <option value="Not Started">Not Started</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Completed">Completed</option>
-                        <option value="Overdue">Overdue</option>
-                      </select>
+                        className="min-w-[8.5rem]"
+                        triggerClassName="h-8 min-h-[32px] border-0 text-xs font-medium"
+                        options={[
+                          { value: 'Not Started', label: 'Not Started' },
+                          { value: 'In Progress', label: 'In Progress' },
+                          { value: 'Completed', label: 'Completed' },
+                          { value: 'Overdue', label: 'Overdue' },
+                        ]}
+                      />
                     </td>
                     <td className="px-5 py-3 text-right">
                       {!isCompleted ? (
@@ -198,7 +191,6 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }) 
         ) : (
           filtered.map((t) => {
             const pri = priorityConfig[t.priority] || priorityConfig.Medium;
-            const st = statusConfig[t.status] || statusConfig['Not Started'];
             const isCompleted = t.status === 'Completed';
             return (
               <motion.div
@@ -223,17 +215,18 @@ export default function EmpSubtasksTable({ tasks, onComplete, onStatusChange }) 
                   </div>
                   <div className="flex justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
                     <span className="text-slate-500">Status</span>
-                    <select
+                    <PtSelect
                       value={t.status === 'Pending' ? 'Not Started' : t.status}
                       onChange={(e) => onStatusChange(t.id, e.target.value)}
-                      className="max-w-[9rem] cursor-pointer rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[10px] font-semibold"
-                      style={{ color: st.color }}
-                    >
-                      <option value="Not Started">Not Started</option>
-                      <option value="In Progress">In Progress</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Overdue">Overdue</option>
-                    </select>
+                      className="max-w-[9rem]"
+                      triggerClassName="h-7 min-h-[28px] text-[10px] font-semibold"
+                      options={[
+                        { value: 'Not Started', label: 'Not Started' },
+                        { value: 'In Progress', label: 'In Progress' },
+                        { value: 'Completed', label: 'Completed' },
+                        { value: 'Overdue', label: 'Overdue' },
+                      ]}
+                    />
                   </div>
                   {!isCompleted ? (
                     <motion.button

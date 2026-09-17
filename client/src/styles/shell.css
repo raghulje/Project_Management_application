@@ -55,11 +55,10 @@ html, body, #root {
   overflow: hidden;
 }
 .pm-brand { display: flex; gap: 10px; align-items: center; padding: 14px 12px; border-bottom: 1px solid #eef2f7; }
-.pm-brand-text { min-width: 0; flex: 1; }
 .pm-logo {
   height: 28px;
   width: auto;
-  max-width: 118px;
+  max-width: 148px;
   object-fit: contain;
   flex-shrink: 0;
   transition: transform 220ms var(--ease), opacity 220ms var(--ease);
@@ -108,6 +107,14 @@ html, body, #root {
   font-weight: 750;
 }
 .pm-nav.is-active i { color: var(--pm); }
+.pm-nav-badge {
+  margin-left: auto;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: #fb8c00; color: #fff;
+  font-size: 10px; font-weight: 800; display: grid; place-items: center;
+  line-height: 1;
+}
+.pm-shell.is-collapsed .pm-nav-badge { display: none; }
 .pm-side-foot { padding: 12px; border-top: 1px solid #eef2f7; }
 .pm-who b { display: block; font-size: 12px; }
 .pm-who span { font-size: 11px; color: var(--pm-muted); }
@@ -140,9 +147,15 @@ html, body, #root {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-.pm-main:not(.is-embed) { padding: 22px 24px 40px; }
+.pm-main:not(.is-embed) { padding: 16px 20px 24px; }
+.pm-main:has(.fr-sheet),
+.pm-main:has(.fr-board) {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
 
-.pm-shell.is-collapsed .pm-brand-text,
 .pm-shell.is-collapsed .pm-navs p,
 .pm-shell.is-collapsed .pm-nav span,
 .pm-shell.is-collapsed .pm-who,

@@ -22,20 +22,89 @@ export type RevisionRow = {
 const SKIP = new Set([
   'id', 'created_at', 'updated_at', 'deleted_at',
   'created_by_user_id', 'updated_by_user_id',
-  'kissflow_created_at', 'kissflow_modified_at',
+  'kissflow_id', 'kissflow_created_at', 'kissflow_modified_at',
   'hrms_payload', 'synced_at',
-  'project_name', 'project_kissflow_id', 'task_name', 'task_code',
+  'project_name', 'project_kissflow_id', 'task_name',
+  'parent_task_code', 'parent_task_kissflow_id', 'parent_task_name',
 ])
 
-function labelOf(field: string) {
-  return field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+const BOOL_FIELDS = new Set([
+  'ai_usage', 'reports_available', 'integrated_with_tally', 'integrated_with_sap',
+  'integrated_with_power_bi', 'brd_available', 'process_document', 'support_available',
+  'cb_analysis_available', 'risk_mitigation', 'requires_approval', 'is_dependent',
+])
+
+const LABELS: Record<string, string> = {
+  name: 'Name',
+  project_code: 'Project code',
+  task_code: 'Task code',
+  status: 'Status',
+  priority: 'Priority',
+  rag: 'RAG',
+  risk: 'Risk',
+  detail: 'Detail',
+  summary: 'Summary',
+  objectives: 'Objectives',
+  start_date: 'Start date',
+  end_date: 'End date',
+  assigned_to_name: 'Assignee',
+  assignee_name: 'Assignee',
+  project_owner_name: 'Project owner',
+  project_manager_name: 'Project manager',
+  business_owner_name: 'Business owner',
+  sponsor_name: 'Sponsor',
+  requester_name: 'Requester',
+  developer_name: 'Developer',
+  cos_owner_name: 'COS owner',
+  secondary_assignee_name: 'Secondary assignee',
+  created_by_name: 'Created by',
+  company_name: 'Company',
+  vendor_name: 'Vendor',
+  application_name: 'Application',
+  project_type: 'Project type',
+  project_request: 'Request type',
+  function_type: 'Function type',
+  function_category: 'Function category',
+  function_sub_category: 'Function sub-category',
+  category: 'Category',
+  entity: 'Entity',
+  business: 'Business',
+  tech_stack: 'Tech stack',
+  governance_frequency: 'Governance',
+  risk_mitigation_details: 'Risk mitigation details',
+  ai_details: 'AI details',
+  tco_efforts: 'TCO / efforts',
+  hours: 'Hours',
+  tat_days: 'TAT days',
+  aging_days: 'Aging days',
+  completion: 'Completion',
+  task_type: 'Task type',
+  workflow_status: 'Workflow status',
+  project_id: 'Project',
+  task_id: 'Parent task',
+  access_request: 'Access request',
+  access_grant: 'Access granted',
+  access_deny: 'Access denied',
 }
 
-function norm(value: unknown) {
-  if (value == null || value === '') return '—'
-  if (typeof value === 'boolean' || value === 0 || value === 1) {
-    if (value === true || value === 1) return 'Yes'
-    if (value === false || value === 0) return 'No'
+function labelOf(field: string) {
+  if (LABELS[field]) return LABELS[field]
+  return field
+    .replace(/_employee_id$/, '')
+    .replace(/_id$/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function isBlank(value: unknown) {
+  return value == null || value === '' || value === 'null' || value === 'undefined'
+}
+
+function norm(field: string, value: unknown) {
+  if (isBlank(value)) return '—'
+  if (BOOL_FIELDS.has(field) || typeof value === 'boolean') {
+    if (value === true || value === 1 || value === '1' || value === 'true') return 'Yes'
+    if (value === false || value === 0 || value === '0' || value === 'false') return 'No'
   }
   const s = String(value).trim()
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
@@ -48,17 +117,40 @@ function norm(value: unknown) {
   return s || '—'
 }
 
+function shouldSkipField(field: string) {
+  if (SKIP.has(field)) return true
+  if (/_employee_id$/.test(field)) return true
+  return false
+}
+
 export function diffRecords(before: Record<string, unknown>, after: Record<string, unknown>, keys?: string[]) {
-  const watch = keys?.length ? keys : Object.keys(after)
+  const watch = keys?.length ? keys : [...new Set([...Object.keys(before), ...Object.keys(after)])]
   const changes: RevisionChange[] = []
   for (const field of watch) {
-    if (SKIP.has(field)) continue
-    const from = norm(before[field])
-    const to = norm(after[field])
+    if (shouldSkipField(field)) continue
+    const from = norm(field, before[field])
+    const to = norm(field, after[field])
     if (from === to) continue
     changes.push({ field, label: labelOf(field), from, to })
   }
-  return changes
+  const named = new Set(changes.map((c) => c.field.replace(/_name$/, '')))
+  return changes.filter((c) => {
+    if (c.field.endsWith('_id') && named.has(c.field.replace(/_id$/, ''))) return false
+    return true
+  })
+}
+
+function actorAudit(user?: {
+  id?: number
+  first_name?: string
+  last_name?: string
+  username?: string
+  email?: string | null
+} | null) {
+  const name = actorLabel(user)
+  const email = String(user?.email || '').trim()
+  if (email && !name.toLowerCase().includes(email.toLowerCase())) return `${name} · ${email}`
+  return name
 }
 
 export async function recordRevision(opts: {
@@ -82,7 +174,7 @@ export async function recordRevision(opts: {
     opts.itemId,
     revisionNo,
     opts.user?.id ?? null,
-    actorLabel(opts.user),
+    actorAudit(opts.user),
     JSON.stringify(opts.changes),
     ts,
   ])
@@ -178,7 +270,7 @@ export async function backfillTimelineRevisions() {
     let prev = '—'
     let n = 0
     for (const entry of hist) {
-      const next = norm(entry.revised_end_date)
+      const next = norm('end_date', entry.revised_end_date)
       if (next === prev) continue
       n += 1
       await run(`
@@ -189,7 +281,7 @@ export async function backfillTimelineRevisions() {
         projectId,
         n,
         String(entry.created_by_name || 'Imported'),
-        JSON.stringify([{ field: 'end_date', label: 'end date', from: prev, to: next }]),
+        JSON.stringify([{ field: 'end_date', label: 'End date', from: prev, to: next }]),
         entry.changed_on || entry.created_at || now(),
       ])
       prev = next

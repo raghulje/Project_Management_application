@@ -29,8 +29,6 @@ import {
   isClosedProjectStatus,
 } from './lib/kfProjectDashboard.js';
 import {
-  createTaskInstance,
-  createSubtaskInstance,
   fetchAllSubtasks,
   filterSubtasksForTask,
 } from './lib/kfProjectTrackerKarthika.js';
@@ -60,6 +58,8 @@ import {
 } from './lib/kfTaskTracker.js';
 import {
   matchesCreatedDateRange,
+  compareCreatedAt,
+  sortByCreatedAtDesc,
 } from './lib/dashboardCreatedDateFilters.js';
 import {
   collectUniqueDimensionValues,
@@ -68,7 +68,7 @@ import {
   rowMatchesPortfolioDimensions,
   taskMatchesPortfolioDimensions,
 } from './lib/dashboardDimensionFilters.js';
-import { openPmRecord, scrollPmToElement } from './pmApi.js';
+import { goPmNewSubtask, goPmNewTask, openPmRecord, scrollPmToElement } from './pmApi.js';
 
 /** Adaptive Period picker → single range or multi-window (FY H/Q multi-select). */
 function resolveUsptPeriodCreatedRanges(periodFrom, periodTo, periodRanges) {
@@ -649,7 +649,7 @@ function filterTasksForProject(allTasks, project) {
   const pname = String(project?.name ?? '').trim().toLowerCase();
   if (!projectIds.size && !pname) return [];
 
-  return rows.filter((t) => {
+  const linked = rows.filter((t) => {
     const taskIds = [
       ...(Array.isArray(t?.projectIds) ? t.projectIds : []),
       t?.projectId,
@@ -660,6 +660,7 @@ function filterTasksForProject(allTasks, project) {
     const tProject = String(t?.project ?? '').trim().toLowerCase();
     return Boolean(pname && tProject && tProject === pname);
   });
+  return sortByCreatedAtDesc(linked);
 }
 
 function isEmptyProjectName(projectName) {
@@ -704,8 +705,8 @@ function MyWorkProjectTasksPanel({
   const [nameFilter, setNameFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [sortKey, setSortKey] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
+  const [sortKey, setSortKey] = useState('createdAt');
+  const [sortDir, setSortDir] = useState('desc');
   const [expandedTaskIds, setExpandedTaskIds] = useState(() => new Set());
 
   const nameOptions = useMemo(
@@ -752,8 +753,10 @@ function MyWorkProjectTasksPanel({
           return compareNumber(parseDelayDays(a), parseDelayDays(b), dir);
         case 'status':
           return compareText(a.status, b.status, dir);
+        case 'createdAt':
+          return compareCreatedAt(a, b, dir, sortDir);
         default:
-          return 0;
+          return compareCreatedAt(a, b, -1, 'desc');
       }
     });
     return copy;
@@ -1101,11 +1104,6 @@ function PremiumKPICard({ title, value, subtitle, trend, icon, theme, index, act
               {trend.value}
             </p>
           ) : null}
-          {onClick ? (
-            <p className="mt-2 text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100">
-              Click to view →
-            </p>
-          ) : null}
         </div>
 
         <div
@@ -1137,7 +1135,7 @@ const USPT_TASK_KPI_FOCUS = {
 const USPT_PROJECT_KPI_FOCUS = {
   'total-projects': { status: 'all', label: 'All projects' },
   'on-track': { status: 'On Track', label: 'On Track projects' },
-  completed: { status: 'Completed', label: 'Completed projects' },
+  completed: { status: '__completed__', label: 'Completed projects' },
   'at-risk': { status: 'At Risk', label: 'At Risk projects' },
   delayed: { status: 'Delayed', label: 'Delayed projects' },
 };
@@ -1241,8 +1239,8 @@ export default function UserSpecificPT({ useLayout = false }) {
   ); // tasks: priority, projects: health
   const [nameFilter, setNameFilter] = useState(USPT_DEFAULT_TABLE_FILTERS.nameFilter);
   const [assigneeFilter, setAssigneeFilter] = useState(USPT_DEFAULT_TABLE_FILTERS.assigneeFilter);
-  const [sortKey, setSortKey] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
+  const [sortKey, setSortKey] = useState('createdAt');
+  const [sortDir, setSortDir] = useState('desc');
   const [expandedProjectId, setExpandedProjectId] = useState(null);
   const [expandedTaskIds, setExpandedTaskIds] = useState(() => new Set());
   const [creatingTaskProjectId, setCreatingTaskProjectId] = useState(null);
@@ -1619,97 +1617,25 @@ export default function UserSpecificPT({ useLayout = false }) {
   }, [kfInstance]);
 
   const handleCreateTaskForProject = useCallback(
-    async (project) => {
-      const sdk = kfInstance ?? (typeof window !== 'undefined' ? window.kf : null) ?? kf;
-      if (!sdk) {
-        console.warn('Create task: Kissflow SDK not available');
+    (project) => {
+      if (isClosedProjectStatus(project?.status) || project?.health === 'Completed') {
+        window.alert('Cannot add a task to a closed project.');
         return false;
       }
-
-      const projectId = resolveProjectBusinessId(project);
-      if (!projectId) {
-        sdk?.client?.showInfo?.('Missing project id on this row (expected e.g. PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `proj-${project?.id ?? projectId}`;
-      if (myWorkRowCreateLock.has(lockKey)) return false;
-
-      myWorkRowCreateLock.add(lockKey);
-      setCreatingTaskProjectId(project?.id ?? projectId);
-      try {
-        const created = await createTaskInstance(sdk, projectId);
-        const opened = openUsptKissflowPopup(
-          sdk,
-          USPT_POPUP_IDS.task,
-          created.instanceId,
-          created.activityInstanceId,
-        );
-        if (!opened) {
-          sdk?.client?.showInfo?.('Task created but the form could not be opened.');
-        }
-        void reloadTasks();
-        void loadHubTableTasks();
-        void loadHubTaskCounts();
-        return true;
-      } catch (error) {
-        console.warn('Create task failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create task.');
-        return false;
-      } finally {
-        myWorkRowCreateLock.delete(lockKey);
-        setCreatingTaskProjectId(null);
-      }
+      return goPmNewTask(project);
     },
-    [kfInstance, reloadTasks, loadHubTableTasks, loadHubTaskCounts],
+    [],
   );
 
   const handleCreateSubtaskForTask = useCallback(
-    async (taskRow) => {
-      const sdk = resolveKfSdk(kfInstance);
+    (taskRow) => {
       if (isTaskCompleted(taskRow?.status)) {
-        sdk?.client?.showInfo?.('Cannot add a subtask to a completed task.');
+        window.alert('Cannot add a subtask to a completed task.');
         return false;
       }
-      if (!sdk) {
-        console.warn('Create subtask: Kissflow SDK not available');
-        return false;
-      }
-
-      const taskId = resolveTaskBusinessIdFromRow(taskRow);
-      if (!taskId) {
-        sdk?.client?.showInfo?.('Missing task id on this row (expected e.g. Task-PRJ-...).');
-        return false;
-      }
-
-      const lockKey = `task-${taskRow?.id ?? taskId}`;
-      if (myWorkRowCreateLock.has(lockKey)) return false;
-
-      myWorkRowCreateLock.add(lockKey);
-      setCreatingSubtaskTaskId(taskRow?.id ?? taskId);
-      try {
-        const created = await createSubtaskInstance(sdk, taskId);
-        const opened = openUsptKissflowPopup(
-          sdk,
-          USPT_POPUP_IDS.subtask,
-          created.instanceId,
-          created.activityInstanceId,
-        );
-        if (!opened) {
-          sdk?.client?.showInfo?.('Subtask created but the form could not be opened.');
-        }
-        void reloadProcessSubtasks();
-        return true;
-      } catch (error) {
-        console.warn('Create subtask failed:', error);
-        sdk?.client?.showInfo?.(error?.message || 'Failed to create subtask.');
-        return false;
-      } finally {
-        myWorkRowCreateLock.delete(lockKey);
-        setCreatingSubtaskTaskId(null);
-      }
+      return goPmNewSubtask(taskRow);
     },
-    [kfInstance, reloadProcessSubtasks],
+    [],
   );
 
   const toggleProjectExpand = useCallback((row) => {
@@ -2320,6 +2246,10 @@ export default function UserSpecificPT({ useLayout = false }) {
       projects = projects.filter((p) => p.health === 'At Risk' || p.health === 'Delayed');
     } else if (statusFilter === '__high_priority__') {
       projects = projects.filter((p) => String(p.priority || '').trim().toLowerCase() === 'high');
+    } else if (statusFilter === '__completed__' || statusFilter === 'Completed') {
+      projects = projects.filter(
+        (p) => p.health === 'Completed' || isClosedProjectStatus(p.status),
+      );
     } else if (statusFilter !== 'all') {
       projects = projects.filter(
         (p) => String(p.health || '').trim() === statusFilter || String(p.status || '').trim() === statusFilter,
@@ -2736,29 +2666,53 @@ export default function UserSpecificPT({ useLayout = false }) {
   }, [teamMembers, scope, selectedMembers]);
 
   const handleOpenTaskDetail = useCallback(
-    (row) => openPmRecord('task', row),
+    (row) => {
+      if (!row) return false;
+      setDetailModal({ type: 'task', row });
+      return true;
+    },
     [],
   );
 
   const openMyWorkProjectAccordionTaskDetail = useCallback(
-    (row) => openPmRecord('task', row),
+    (row) => {
+      if (!row) return false;
+      setDetailModal({ type: 'task', row });
+      return true;
+    },
     [],
   );
 
   const handleOpenMyTeamSubtaskDetail = useCallback(
-    (row) => openPmRecord('subtask', row),
+    (row) => {
+      if (!row) return false;
+      setDetailModal({ type: 'subtask', row });
+      return true;
+    },
     [],
   );
 
-  const openUsptSubtaskDetail = useCallback((sub) => openPmRecord('subtask', sub), []);
+  const openUsptSubtaskDetail = useCallback((sub) => {
+    if (!sub) return false;
+    setDetailModal({ type: 'subtask', row: sub });
+    return true;
+  }, []);
 
   const handleOpenProjectDetail = useCallback(
-    (row) => openPmRecord('project', row),
+    (row) => {
+      if (!row) return false;
+      setDetailModal({ type: 'project', row });
+      return true;
+    },
     [],
   );
 
   const openMyWorkProjectPopup = useCallback(
-    (row) => openPmRecord('project', row),
+    (row) => {
+      if (!row) return false;
+      setDetailModal({ type: 'project', row });
+      return true;
+    },
     [],
   );
 
@@ -2812,8 +2766,10 @@ export default function UserSpecificPT({ useLayout = false }) {
           return compareNumber(a.pending, b.pending, dir);
         case 'health':
           return compareText(a.health, b.health, dir);
+        case 'createdAt':
+          return compareCreatedAt(a, b, dir, sortDir);
         default:
-          return 0;
+          return compareCreatedAt(a, b, -1, 'desc');
       }
     });
     return rows;
@@ -4090,6 +4046,7 @@ export default function UserSpecificPT({ useLayout = false }) {
         detail={detailModal}
         onClose={handleCloseDetailModal}
         viewerName={userName}
+        onOpenRecord={(row) => openPmRecord(detailModal?.type || 'project', row)}
       />
     </div>
   );

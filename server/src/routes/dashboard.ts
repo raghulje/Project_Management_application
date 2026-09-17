@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import { all, get } from '../db/index.js'
-import { okItem } from '../utils/response.js'
+import { fail, okItem, okMessage } from '../utils/response.js'
 import { buildPortfolio } from '../services/portfolio.js'
 import { ACTIVE_EMPLOYEE_SQL } from '../services/employeeStatus.js'
+import { syncKissflowPortfolio } from '../services/kissflowImport.js'
 
 export const dashboardRouter = Router()
 
@@ -73,4 +74,18 @@ dashboardRouter.get('/charts', async (_req, res) => {
 
 dashboardRouter.get('/portfolio', async (_req, res) => {
   return okItem(res, await buildPortfolio())
+})
+
+/** Same case/process endpoints as ProjectDashboardPage — production first, then development. */
+dashboardRouter.post('/kissflow-sync', async (_req, res) => {
+  try {
+    const result = await syncKissflowPortfolio()
+    return okMessage(
+      res,
+      `Synced ${result.projects} projects, ${result.tasks} tasks, ${result.subtasks} subtasks from ${result.source}`,
+      result,
+    )
+  } catch (err) {
+    return fail(res, err instanceof Error ? err.message : 'Kissflow sync failed', 502)
+  }
 })
