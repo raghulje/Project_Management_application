@@ -1,9 +1,9 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { activityApi, employeesApi, projectsApi, tasksApi } from '../api/client'
 import { useAuth } from '../api/AuthContext'
 import { COMPANY_OPTS, PRIORITY_OPTS, STATUS_OPTS, TASK_TYPE_OPTS, dateInput } from './RecordUi'
-import { initials } from './WorkspaceKit'
+import { initials, isClosedStatus, ReopenAction, ReopenBadge } from './WorkspaceKit'
 import {
   AccessMark, PolicyBanner, RequestAccessModal, asPolicy, canSaveRecord, fieldAccess,
   useRequestAccess, type EditPolicy,
@@ -70,6 +70,7 @@ export default function TaskComposer() {
   const [draft, setDraft] = useState('')
   const [createdAt, setCreatedAt] = useState('')
   const [revisions, setRevisions] = useState<StatusRevision[]>([])
+  const [reopenCount, setReopenCount] = useState(0)
 
   useEffect(() => {
     projectsApi.selectlist().then((r) => {
@@ -107,6 +108,7 @@ export default function TaskComposer() {
       })
       setCreatedAt(String(r.created_at || r.kissflow_created_at || ''))
       setRevisions((r.revisions as StatusRevision[]) || [])
+      setReopenCount(Number(r.reopen_count || 0))
       if (r.assigned_to_name) setTagged((prev) => prev.includes(String(r.assigned_to_name)) ? prev : [...prev, String(r.assigned_to_name)])
     })
     activityApi.bundle('task', id).then((b) => {
@@ -257,11 +259,11 @@ export default function TaskComposer() {
   }
 
   const from = fromState(loc)
-  const back = id
-    ? `/tasks/${id}`
-    : (from || (form.project_id ? `/projects/${form.project_id}?tab=tasks` : defaultList('task', isEmployee)))
+  const list = defaultList('task', isEmployee)
+  const back = from || (id ? `/tasks/${id}` : (form.project_id ? `/projects/${form.project_id}?tab=tasks` : list))
   const projectLabel = projects.find((p) => p.value === form.project_id)?.label || form.project_name || 'Select a project'
-  const lock = (f: string) => fieldAccess(policy, f).locked
+  const closed = isClosedStatus(form.status)
+  const lock = (f: string) => fieldAccess(policy, f).locked || (f === 'status' && closed)
   const mark = (f: string) => <AccessMark policy={policy} field={f} onRequest={req.ask} />
   const readOnly = !canSaveRecord(policy)
   const crumbs = pageCrumbs({
@@ -280,6 +282,20 @@ export default function TaskComposer() {
   return (
     <FrSheet min={rail === 'min'}>
       <FrSheetHead title="Task" crumbs={crumbs} closeTo={back} closeState={stateFor(back, loc)}>
+        {reopenCount > 0 ? <ReopenBadge count={reopenCount} /> : null}
+        {id ? (
+          <ReopenAction
+            noun="task"
+            status={form.status}
+            onSubmit={async (reason) => {
+              await tasksApi.reopen(id, reason)
+              const r = await tasksApi.get(id)
+              set('status', String(r.status || 'Open'))
+              setRevisions((r.revisions as StatusRevision[]) || [])
+              setReopenCount(Number(r.reopen_count || 0))
+            }}
+          />
+        ) : null}
         {policy?.can_request ? (
           <button className="ws-btn ghost" type="button" onClick={() => req.ask([])}>
             <i className="ri-lock-unlock-line" />Request change

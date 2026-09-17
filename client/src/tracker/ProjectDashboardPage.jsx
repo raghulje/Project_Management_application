@@ -1415,6 +1415,7 @@ function personMatches(user, displayName) {
   const userEmail = String(user.Email || user.email || user.User_email || '').trim().toLowerCase();
   const userName = String(user.Name || user.DisplayName || user.FullName || '').trim().toLowerCase();
   const userFirstName = String(user.FirstName || '').trim().toLowerCase();
+  const compact = (s) => String(s || '').toLowerCase().replace(/[\s.]+/g, '');
 
   // Accept both plain string and rich refs { id, email, name } from mapped rows.
   const personRef = typeof displayName === 'object'
@@ -1429,9 +1430,10 @@ function personMatches(user, displayName) {
   if (userEmail && targetEmail && userEmail === targetEmail) return true;
   // 2) Exact/near-exact display name match.
   if (userName && targetName && (userName === targetName || userName.includes(targetName) || targetName.includes(userName))) return true;
+  if (compact(userName) && compact(targetName) && compact(userName) === compact(targetName)) return true;
   const userToken = (userFirstName || userName).split(/\s+/)[0] || '';
   const targetToken = targetName.split(/\s+/)[0] || '';
-  if (userToken && targetToken && userToken === targetToken) return true;
+  if (userToken && targetToken && userToken === targetToken && userToken.length > 2) return true;
   return false;
 }
 
@@ -1441,17 +1443,13 @@ function taskAssigneeMatchesUser(user, task) {
     id: task.assignedToId || task?.raw?.Assigned_To?._id,
     email: task.assignedToEmail || task?.raw?.Assigned_To?.Email || task?.raw?.Assigned_To?.email,
     name: task.assignedTo || task?.raw?.Assigned_To?.Name,
-  });
+  })
+    || personMatches(user, { name: task.createdBy, email: task.createdByEmail });
 }
 
 function projectBelongsToUser(user, project, assignedTaskProjectIds, assignedTaskProjectRefs) {
   if (!user || !project) return false;
-  if (personMatches(user, { id: project.ownerId, email: project.ownerEmail, name: project.owner })) return true;
-  if (personMatches(user, {
-    id: project.projectOwnerId,
-    email: project.projectOwnerEmail,
-    name: project.projectOwner,
-  })) return true;
+  if (projectOwnedOrStewardedByUser(user, project)) return true;
   const pid = String(project.id || '').trim();
   const pref = String(project.displayId || '').trim();
   if (pid && assignedTaskProjectIds?.has(pid)) return true;
@@ -1494,23 +1492,28 @@ function projectOwnedOrStewardedByUser(user, project) {
       email: project.createdByEmail,
       name: project.createdBy,
     })
+    || personMatches(user, { name: project.projectManager })
   );
 }
 
-/** Scope portfolio to the logged-in user (owner / stewards / assigned tasks). */
-function scopeDashboardDataToCurrentUser(projects, tasks, processSubtasks, user, { ownerOnlyProjects = false } = {}) {
-  if (!user) {
+/** Scope portfolio to the logged-in user and optional team (L1/L2 reports). */
+function scopeDashboardDataToCurrentUser(projects, tasks, processSubtasks, user, { ownerOnlyProjects = false, teamPeople = [] } = {}) {
+  const people = [user, ...(Array.isArray(teamPeople) ? teamPeople : [])].filter(Boolean);
+  if (!people.length) {
     return { projects: [], tasks: [], processSubtasks: [] };
   }
-  const myTasks = (Array.isArray(tasks) ? tasks : []).filter((t) => taskAssigneeMatchesUser(user, t));
+  const matchesTask = (t) => people.some((p) => taskAssigneeMatchesUser(p, t));
+  const matchesProject = (p, assignedTaskProjectIds, assignedTaskProjectRefs) => (
+    people.some((person) => (ownerOnlyProjects
+      ? projectOwnedOrStewardedByUser(person, p)
+      : projectBelongsToUser(person, p, assignedTaskProjectIds, assignedTaskProjectRefs)))
+  );
+  const myTasks = (Array.isArray(tasks) ? tasks : []).filter(matchesTask);
   const assignedTaskProjectIds = new Set(myTasks.map((t) => String(t.projectId || '').trim()).filter(Boolean));
   const assignedTaskProjectRefs = new Set(myTasks.map((t) => String(t.projectRef || '').trim()).filter(Boolean));
-  const myProjects = (Array.isArray(projects) ? projects : []).filter((p) => {
-    if (ownerOnlyProjects) {
-      return projectOwnedOrStewardedByUser(user, p);
-    }
-    return projectBelongsToUser(user, p, assignedTaskProjectIds, assignedTaskProjectRefs);
-  });
+  const myProjects = (Array.isArray(projects) ? projects : []).filter((p) => (
+    matchesProject(p, assignedTaskProjectIds, assignedTaskProjectRefs)
+  ));
 
   /** User hub projects: owner-scoped projects show every task on those projects, not assignee-only. */
   if (ownerOnlyProjects) {
@@ -1531,7 +1534,15 @@ function scopeDashboardDataToCurrentUser(projects, tasks, processSubtasks, user,
   const taskKeys = new Set(myTasks.map((t) => resolveTaskBusinessIdFromRow(t)).filter(Boolean));
   const myProcessSubtasks = (Array.isArray(processSubtasks) ? processSubtasks : []).filter((sub) => {
     const parentId = String(sub?.parentTaskBusinessId || '').trim();
-    return parentId && taskKeys.has(parentId);
+    if (parentId && taskKeys.has(parentId)) return true;
+    return people.some((person) => (
+      personMatches(person, {
+        id: sub?.assignedToId,
+        email: sub?.assignedToEmail,
+        name: sub?.assignedTo,
+      })
+      || personMatches(person, { name: sub?.createdBy, email: sub?.createdByEmail })
+    ));
   });
 
   return {
@@ -5506,6 +5517,7 @@ function DashboardPagePremium({
   const [myTeamProjectsLoading, setMyTeamProjectsLoading] = useState(false);
   const [myTeamTasksLoading, setMyTeamTasksLoading] = useState(false);
   const [myTeamError, setMyTeamError] = useState(null);
+  const [teamPeople, setTeamPeople] = useState([]);
   const [dimensionFilters, setDimensionFilters] = useState(() => {
     const emptyPeriod = getEmptyPeriodState();
     return {
@@ -5659,6 +5671,36 @@ function DashboardPagePremium({
     if (resolvedName) setUserName(resolvedName);
     if (resolvedRole) setRoleName(resolvedRole);
   }, [kfInstance, scopeUser]);
+
+  useEffect(() => {
+    if (!scopeToCurrentUser) {
+      setTeamPeople([]);
+      return;
+    }
+    let cancelled = false;
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('refex_pm_token') : '';
+    fetch('/api/v1/dashboard/visibility', {
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const team = Array.isArray(data?.team) ? data.team : [];
+        setTeamPeople(team.map((p) => ({
+          _id: String(p.employee_id || ''),
+          Email: p.email || '',
+          Name: p.name || '',
+          FirstName: String(p.name || '').split(' ')[0] || '',
+        })));
+      })
+      .catch(() => {
+        if (!cancelled) setTeamPeople([]);
+      });
+    return () => { cancelled = true; };
+  }, [scopeToCurrentUser, userEmail, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5845,7 +5887,10 @@ function DashboardPagePremium({
       apiSubtaskData,
       apiProcessSubtaskData,
       scopingUser,
-      { ownerOnlyProjects: projectsScopeOwnerOnly },
+      {
+        ownerOnlyProjects: projectsScopeOwnerOnly,
+        teamPeople: isMyTeamView ? teamPeople : [],
+      },
     );
   }, [
     scopeToCurrentUser,
@@ -5858,6 +5903,7 @@ function DashboardPagePremium({
     projectsScopeOwnerOnly,
     myTeamProjects,
     myTeamTasks,
+    teamPeople,
   ]);
 
   /** My Team member list from report rows (owners + assignees), same idea as UserSpecificPT. */
@@ -6197,7 +6243,7 @@ function DashboardPagePremium({
   };
   const content = (
     <div className={embeddedInHub ? 'min-w-0 overflow-x-clip' : 'overflow-x-clip bg-gradient-to-b from-[#edf1ff] via-[#f6f8ff] to-[#f2ecff]'}>
-      <div className={embeddedInHub ? 'min-w-0' : 'p-3 pb-6 sm:p-6'}>
+      <div className={embeddedInHub ? 'min-w-0' : 'px-3 pt-1.5 pb-6 sm:px-6 sm:pt-3 sm:pb-6'}>
         {!hideWelcomeHeader ? (
         <motion.header
           ref={headerRef}

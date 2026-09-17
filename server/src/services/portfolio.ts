@@ -152,8 +152,46 @@ function toTrackerRevision(row: RevisionRow, idx: number) {
   }
 }
 
+function emailOf(v: unknown) {
+  const s = String(v || '').trim().toLowerCase()
+  return s.includes('@') ? s : ''
+}
+
+function nameKey(v: unknown) {
+  return str(v).toLowerCase().replace(/\s+/g, ' ')
+}
+
+type PersonIndex = {
+  emailFor: (employeeId: unknown, name: unknown) => string
+}
+
+async function loadPersonIndex(): Promise<PersonIndex> {
+  const rows = await all<{ id: number; first_name: string | null; last_name: string | null; email: string | null }>(`
+    SELECT id, first_name, last_name, email
+    FROM employees
+    WHERE deleted_at IS NULL
+  `)
+  const byId = new Map<number, string>()
+  const byName = new Map<string, string>()
+  for (const row of rows) {
+    const email = emailOf(row.email)
+    if (!email) continue
+    byId.set(Number(row.id), email)
+    const name = nameKey(`${row.first_name || ''} ${row.last_name || ''}`)
+    if (name && !byName.has(name)) byName.set(name, email)
+  }
+  return {
+    emailFor(employeeId, name) {
+      const id = Number(employeeId)
+      if (Number.isFinite(id) && id > 0 && byId.has(id)) return byId.get(id) || ''
+      const key = nameKey(name)
+      return key ? (byName.get(key) || '') : ''
+    },
+  }
+}
+
 export async function buildPortfolio() {
-  const [projects, tasks, subtasks, timeline, revIndex] = await Promise.all([
+  const [projects, tasks, subtasks, timeline, revIndex, people] = await Promise.all([
     all<Row>(`SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY id DESC`),
     all<Row>(`
       SELECT t.*, p.kissflow_id as project_kissflow_id, p.project_code as project_code,
@@ -166,14 +204,17 @@ export async function buildPortfolio() {
     `),
     all<Row>(`
       SELECT s.*, t.task_code as parent_task_code, t.kissflow_id as parent_task_kissflow_id,
-             t.name as parent_task_name
+             t.name as parent_task_name, t.project_id as parent_project_id,
+             p.name as project_name, p.kissflow_id as project_kissflow_id, p.project_code as project_code
       FROM subtasks s
       LEFT JOIN tasks t ON t.id = s.task_id
+      LEFT JOIN projects p ON p.id = t.project_id
       WHERE s.deleted_at IS NULL
       ORDER BY s.id DESC
     `),
     all<Row>(`SELECT * FROM project_timeline_history ORDER BY id ASC`),
     loadRevisionIndex(),
+    loadPersonIndex(),
   ])
   const revCount = (type: string, id: unknown) => revIndex.get(`${type}:${Number(id)}`)?.length || 0
   const revHistory = (type: string, id: unknown, fallback: unknown[] = []) => {
@@ -226,7 +267,12 @@ export async function buildPortfolio() {
       _activity_instance_id: '',
       projectId: projectKissflowId,
       projectRef: projectCode,
+      projectDbId: t.project_id != null ? Number(t.project_id) : null,
       projectName,
+      l1ManagerEmail: str(t.l1_manager_email),
+      l2ManagerEmail: str(t.l2_manager_email),
+      createdBy: str(t.created_by_name),
+      createdByEmail: str(t.created_by_email),
       taskName: str(t.name, 'Untitled Task'),
       taskType: str(t.task_type),
       entity: str(t.entity || t.project_entity),
@@ -237,7 +283,7 @@ export async function buildPortfolio() {
       priority: str(t.priority),
       assignedTo,
       assignedToId: t.assigned_to_employee_id != null ? String(t.assigned_to_employee_id) : '',
-      assignedToEmail: '',
+      assignedToEmail: people.emailFor(t.assigned_to_employee_id, assignedTo),
       assigneeAvatar: toInitials(assignedTo),
       startDate,
       endDate,
@@ -260,7 +306,7 @@ export async function buildPortfolio() {
         Task_Priority: t.priority,
         Start_Date: t.start_date,
         End_Date: t.end_date,
-        Assigned_To: { Name: assignedTo },
+        Assigned_To: { Name: assignedTo, Email: people.emailFor(t.assigned_to_employee_id, assignedTo) },
         Project_ID: {
           _id: projectKissflowId,
           _item_id: projectKissflowId,
@@ -319,11 +365,11 @@ export async function buildPortfolio() {
       name: str(p.name, `Project ${id}`),
       owner: ownerName,
       ownerId: p.project_owner_employee_id != null ? String(p.project_owner_employee_id) : '',
-      ownerEmail: '',
+      ownerEmail: people.emailFor(p.project_owner_employee_id, ownerName),
       ownerAvatar: toInitials(ownerName),
       businessOwner,
       businessOwnerId: p.business_owner_employee_id != null ? String(p.business_owner_employee_id) : '',
-      businessOwnerEmail: '',
+      businessOwnerEmail: people.emailFor(p.business_owner_employee_id, businessOwner),
       lineOfBusiness: str(p.category, 'Project Management'),
       functionType: str(p.function_type),
       department: str(p.function_category, 'N/A'),
@@ -363,17 +409,19 @@ export async function buildPortfolio() {
       requester: str(p.requester_name),
       sponsor: str(p.sponsor_name),
       sponsorId: p.sponsor_employee_id != null ? String(p.sponsor_employee_id) : '',
-      sponsorEmail: '',
+      sponsorEmail: people.emailFor(p.sponsor_employee_id, p.sponsor_name),
       projectOwner: str(p.project_owner_name),
       projectOwnerId: p.project_owner_employee_id != null ? String(p.project_owner_employee_id) : '',
-      projectOwnerEmail: '',
+      projectOwnerEmail: people.emailFor(p.project_owner_employee_id, p.project_owner_name),
       cosOwner: str(p.cos_owner_name),
       cosOwnerId: '',
-      cosOwnerEmail: '',
+      cosOwnerEmail: people.emailFor(null, p.cos_owner_name),
       developer: str(p.developer_name),
       developerId: p.developer_employee_id != null ? String(p.developer_employee_id) : '',
-      developerEmail: '',
+      developerEmail: people.emailFor(p.developer_employee_id, p.developer_name),
       projectManager: str(p.project_manager_name),
+      l1ManagerEmail: str(p.l1_manager_email),
+      l2ManagerEmail: str(p.l2_manager_email),
       reportsAvailable: Boolean(p.reports_available),
       integratedTally: Boolean(p.integrated_with_tally),
       integratedSap: Boolean(p.integrated_with_sap),
@@ -386,7 +434,7 @@ export async function buildPortfolio() {
       modifiedAt: fmtDate(p.kissflow_modified_at || p.updated_at),
       createdBy: str(p.requester_name),
       createdById: '',
-      createdByEmail: '',
+      createdByEmail: people.emailFor(p.requester_employee_id, p.requester_name),
       priorityLabel: str(p.priority, 'Low'),
       subtasks: [] as unknown[],
       revisionHistory: revHistory('project', p.id, sorted.map((entry, revIdx) => ({
@@ -410,12 +458,22 @@ export async function buildPortfolio() {
       id,
       dbId: Number(s.id) || null,
       parentTaskBusinessId: parentId,
+      parentTaskName: str(s.parent_task_name),
+      parentTaskId: parentId,
+      projectName: str(s.project_name),
+      projectId: str(s.project_kissflow_id) || str(s.project_code),
       taskName: displayName,
       subtaskName: displayName,
       name: displayName,
       summary: str(s.summary) || displayName,
       assignedTo: assignee,
+      assignedToId: s.assigned_to_employee_id != null ? String(s.assigned_to_employee_id) : '',
+      assignedToEmail: people.emailFor(s.assigned_to_employee_id, assignee),
       createdBy: str(s.created_by_name, '—'),
+      createdByEmail: people.emailFor(null, s.created_by_name),
+      createdAt: fmtDate(s.created_at),
+      l1ManagerEmail: str(s.l1_manager_email),
+      l2ManagerEmail: str(s.l2_manager_email),
       assigneeAvatar: toInitials(assignee !== '—' ? assignee : str(s.created_by_name)),
       status: str(s.status, 'Open'),
       startDate: fmtDate(s.start_date) || '—',

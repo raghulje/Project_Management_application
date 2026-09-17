@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../api/AuthContext'
-import { Alert, Insights, PageHead } from './AdminKit'
+import { Alert } from './AdminKit'
+import { FrAcc, FrField, FrGrid, FrHeader, FrKpi, FrPage, FrSection, FrYesNo } from './FormReference'
 
 type Snapshot = {
   smtp_configured: boolean
@@ -83,91 +84,109 @@ export function NotificationsSettings() {
     } finally { setRunBusy(false) }
   }
 
-  if (loading) return <p className="ak-boot">Loading notifications…</p>
+  if (loading) {
+    return (
+      <FrPage>
+        <FrHeader crumbs={[{ to: '/admin', label: 'Admin' }, { label: 'Notifications' }]} title="Notifications" count="Loading..." />
+      </FrPage>
+    )
+  }
 
   return (
-    <div className="ak">
-      <PageHead title="Notifications" subtitle="Triggers, templates, and recipients.">
+    <FrPage>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { label: 'Notifications' }]}
+        title="Notifications"
+        count="Triggers, templates, and recipients"
+      >
         <Link className="ws-btn ghost" to="/admin/email-logs"><i className="ri-mail-send-line" />Email logs</Link>
-      </PageHead>
-      <Insights cards={[
+        {canEdit ? (
+          <button className="ws-btn ghost" type="button" disabled={runBusy} onClick={() => void runOverdue()}>
+            {runBusy ? 'Running...' : 'Run overdue alerts'}
+          </button>
+        ) : null}
+        {canEdit ? (
+          <button className="ws-btn" type="submit" form="notif-form" disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
+        ) : null}
+      </FrHeader>
+      <FrKpi cards={[
         { label: 'SMTP', value: snap?.smtp_configured ? 'Ready' : 'Off', tone: snap?.smtp_configured ? 'green' : 'rose', icon: 'ri-server-line' },
-        { label: 'Ops recipients', value: snap?.resolved_ops_emails?.length || 0, tone: 'blue', icon: 'ri-mail-line' },
+        { label: 'Ops recipients', value: snap?.resolved_ops_emails?.length || 0, icon: 'ri-mail-line' },
         { label: 'Events', value: snap?.triggers?.length || 0, tone: 'amber', icon: 'ri-flashlight-line' },
       ]} />
       {err ? <Alert kind="err">{err}</Alert> : null}
       {msg ? <Alert kind="ok">{msg}</Alert> : null}
 
-      <form className="pm-card" onSubmit={(e) => void save(e)}>
-        <div className="pm-form-section">
-          <h3>Delivery</h3>
-          <p className="muted">{snap?.smtp_hint}</p>
-          <div className="pm-form-grid" style={{ marginTop: 12 }}>
-            <label className="pm-field">
-              <span>Fallback alert email</span>
-              <input type="email" disabled={!canEdit} value={alertEmail} onChange={(e) => setAlertEmail(e.target.value)} placeholder="ops@refex.co.in" />
-            </label>
-            <label className="pm-field">
-              <span>Extra ops emails</span>
-              <textarea disabled={!canEdit} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="one@refex.co.in, two@refex.co.in" />
-            </label>
-          </div>
-          <label className="pm-field" style={{ marginTop: 12 }}>
-            <span>
-              <input type="checkbox" disabled={!canEdit} checked={toOps} onChange={(e) => setToOps(e.target.checked)} />
-              {' '}Send workflow mail to Admin / Superuser / notify.ops
-            </span>
-          </label>
-          <label className="pm-field">
-            <span>
-              <input type="checkbox" disabled={!canEdit} checked={toAssignee} onChange={(e) => setToAssignee(e.target.checked)} />
-              {' '}Also email the assignee on overdue alerts
-            </span>
-          </label>
-        </div>
-
-        <div className="pm-form-section">
-          <h3>Trigger categories</h3>
-          {(snap?.categories || []).map((c) => (
-            <label key={c.key} className="pm-field">
-              <span>
-                <input
-                  type="checkbox"
-                  disabled={!canEdit}
-                  checked={cats[c.key] !== false}
-                  onChange={(e) => setCats((prev) => ({ ...prev, [c.key]: e.target.checked }))}
-                />
-                {' '}{c.label}
-              </span>
-            </label>
-          ))}
-        </div>
-
-        <div className="pm-form-section">
-          <h3>Templates / events</h3>
-          <p className="muted">Branded HTML emails (project/task/subtask). Each event is logged in Email logs as sent, skipped, or failed.</p>
-          <table className="pm-table">
-            <thead><tr><th>Event</th><th>Category</th></tr></thead>
-            <tbody>
-              {(snap?.triggers || []).map((t) => (
-                <tr key={t.key}><td>{t.label}</td><td>{t.category}</td></tr>
+      <form id="notif-form" onSubmit={(e) => void save(e)}>
+        <FrAcc>
+          <FrSection label="Delivery">
+            <p className="fr-sub" style={{ margin: '0 0 14px' }}>{snap?.smtp_hint}</p>
+            <FrGrid>
+              <FrField label="Fallback alert email" span={2}>
+                <input type="email" disabled={!canEdit} value={alertEmail} onChange={(e) => setAlertEmail(e.target.value)} placeholder="ops@refex.co.in" />
+              </FrField>
+              <FrField label="Extra ops emails" span={2}>
+                <textarea disabled={!canEdit} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="one@refex.co.in, two@refex.co.in" />
+              </FrField>
+              <FrField label="Workflow mail to Admin / Superuser / notify.ops">
+                <FrYesNo value={toOps} onChange={setToOps} disabled={!canEdit} />
+              </FrField>
+              <FrField label="Email the assignee on overdue alerts">
+                <FrYesNo value={toAssignee} onChange={setToAssignee} disabled={!canEdit} />
+              </FrField>
+            </FrGrid>
+          </FrSection>
+          <FrSection label="Trigger categories">
+            <FrGrid>
+              {(snap?.categories || []).map((c) => (
+                <FrField key={c.key} label={c.label}>
+                  <FrYesNo
+                    value={cats[c.key] !== false}
+                    onChange={(v) => setCats((prev) => ({ ...prev, [c.key]: v }))}
+                    disabled={!canEdit}
+                  />
+                </FrField>
               ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="pm-form-actions">
-          {canEdit ? <button className="ws-btn" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button> : null}
-          {canEdit ? <button className="ws-btn ghost" type="button" disabled={runBusy} onClick={() => void runOverdue()}>{runBusy ? 'Running…' : 'Run overdue alerts now'}</button> : null}
-        </div>
+            </FrGrid>
+          </FrSection>
+          <FrSection label="Templates / events" count={snap?.triggers?.length || 0}>
+            <p className="fr-sub" style={{ margin: '0 0 12px' }}>Branded HTML emails (project/task/subtask). Each event is logged in Email logs as sent, skipped, or failed.</p>
+            <div className="fr-table-wrap">
+              <table className="fr-table">
+                <thead><tr><th>Event</th><th>Category</th></tr></thead>
+                <tbody>
+                  {(snap?.triggers || []).length === 0 ? (
+                    <tr><td colSpan={2} className="fr-empty">No events configured</td></tr>
+                  ) : (snap?.triggers || []).map((t) => (
+                    <tr key={t.key}>
+                      <td>
+                        <span className="fr-name-cell">
+                          <span className="fr-name">{t.label}</span>
+                          <span className="fr-sub">{t.key}</span>
+                        </span>
+                      </td>
+                      <td>{t.category}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </FrSection>
+          <FrSection label="Resolved ops recipients">
+            <FrGrid>
+              <FrField label="Emails" span={2} view>
+                {(snap?.resolved_ops_emails || []).join(', ') || 'None yet — set alert email or grant notify.ops.'}
+              </FrField>
+              <FrField label="Ops users" span={2} view>
+                {(snap?.ops_users || []).map((u) => u.name).join(', ') || '—'}
+              </FrField>
+            </FrGrid>
+            <p className="fr-sub" style={{ marginTop: 12 }}>
+              <Link to="/settings/roles">Manage roles</Link> to toggle "Receive ops email alerts".
+            </p>
+          </FrSection>
+        </FrAcc>
       </form>
-
-      <div className="pm-card" style={{ marginTop: 16, padding: 18 }}>
-        <h3 style={{ marginTop: 0 }}>Resolved ops recipients</h3>
-        <p className="muted">{(snap?.resolved_ops_emails || []).join(', ') || 'None yet — set alert email or grant notify.ops.'}</p>
-        <p className="muted">Ops users: {(snap?.ops_users || []).map((u) => u.name).join(', ') || '—'}</p>
-        <p className="muted"><Link to="/settings/roles">Manage roles</Link> to toggle “Receive ops email alerts”.</p>
-      </div>
-    </div>
+    </FrPage>
   )
 }

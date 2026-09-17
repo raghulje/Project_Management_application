@@ -6,6 +6,7 @@
   "scripts": {
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/db/seed.ts",
+    "provision:users": "tsx src/db/provisionEmployeeUsers.ts",
     "import:kissflow": "tsx src/db/importKissflow.ts",
     "dev": "tsx watch src/index.ts",
     "start": "node --import tsx src/index.ts",

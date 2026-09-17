@@ -263,10 +263,6 @@ export default function UserHubTasksPage({ useLayout = false }) {
           scopeToCurrentUser
           scopeUser={scopeUser}
           contentView="tasks"
-          overrideTasks={processTasks}
-          overrideTasksLoading={processTasksLoading}
-          overrideTasksForMetrics={processTasks}
-          overrideTasksForMetricsLoading={processTasksLoading}
           hideUserScopeToggle
           hideWelcomeHeader
           embeddedInHub
@@ -281,14 +277,8 @@ export default function UserHubTasksPage({ useLayout = false }) {
             subtitle: `Your tasks · ${displayRole}`,
           }}
           onCreateTaskRecord={handleCreateTask}
-          taskTableToolbar={taskTableToolbar}
           onOpenTaskRow={handleOpenTaskRow}
           onOpenSubtaskRow={handleOpenSubtaskRow}
-          taskBulkSelectEnabled={showDraftBulkSelect}
-          taskSelectedRowIds={selectedDraftIds}
-          onTaskToggleRowSelect={handleToggleRowSelect}
-          onTaskToggleAllRowsSelect={handleToggleAllRowsSelect}
-          getTaskRowSelectId={resolveTaskDraftDeleteId}
         />
       </div>
     </div>

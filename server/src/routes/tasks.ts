@@ -3,8 +3,10 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
+import { resolveVisibility, subtaskRowVisible, taskRowVisible, visibilitySql } from '../services/recordVisibility.js'
 
 export const tasksRouter = Router()
 
@@ -37,6 +39,10 @@ tasksRouter.get('/', async (req, res) => {
     WHERE t.deleted_at IS NULL
   `
   const params: unknown[] = []
+  const vis = await resolveVisibility(req.user)
+  const clause = visibilitySql(vis, 'task', 't')
+  sql += clause.sql
+  params.push(...clause.params)
   if (req.query.project_id) { sql += ' AND t.project_id = ?'; params.push(Number(req.query.project_id)) }
   if (req.query.status) { sql += ' AND t.status = ?'; params.push(String(req.query.status)) }
   if (req.query.priority) { sql += ' AND t.priority = ?'; params.push(String(req.query.priority)) }
@@ -56,8 +62,10 @@ tasksRouter.get('/', async (req, res) => {
 
 tasksRouter.get('/selectlist', async (req, res) => {
   const q = String(req.query.search || '').trim()
-  let sql = `SELECT id, CONCAT(COALESCE(task_code,''), ' — ', name) as text FROM tasks WHERE deleted_at IS NULL`
-  const params: unknown[] = []
+  const vis = await resolveVisibility(req.user)
+  const clause = visibilitySql(vis, 'task')
+  let sql = `SELECT id, CONCAT(COALESCE(task_code,''), ' — ', name) as text FROM tasks WHERE deleted_at IS NULL${clause.sql}`
+  const params: unknown[] = [...clause.params]
   if (req.query.project_id) { sql += ' AND project_id = ?'; params.push(Number(req.query.project_id)) }
   if (q) { sql += ' AND (name LIKE ? OR task_code LIKE ?)'; params.push(`%${q}%`, `%${q}%`) }
   sql += ' ORDER BY name ASC LIMIT 500'
@@ -79,11 +87,19 @@ tasksRouter.get('/:id', async (req, res) => {
         LIMIT 1
       `, [key, key])
   if (!row) return fail(res, 'Task not found', 404)
+  const vis = await resolveVisibility(req.user)
   const [subtasks, revisions] = await Promise.all([
     all(`SELECT * FROM subtasks WHERE task_id = ? AND deleted_at IS NULL ORDER BY id DESC`, [row.id]),
     listRevisions('task', Number(row.id)),
   ])
-  const mapped = mapTask(row, { subtasks, revisions, revision_count: revisions.length })
+  const canTask = vis.unrestricted || taskRowVisible(vis, row)
+  const scopedSubs = canTask ? subtasks : subtasks.filter((s) => subtaskRowVisible(vis, s))
+  if (!canTask && !scopedSubs.length) return fail(res, 'Task not found', 404)
+  const mapped = mapTask(row, {
+    subtasks: scopedSubs, revisions,
+    revision_count: revisions.length,
+    reopen_count: revisions.filter(isReopenRevision).length,
+  })
   return okItem(res, req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
 })
 
@@ -139,11 +155,29 @@ tasksRouter.post('/', async (req, res) => {
   return okMessage(res, 'Task created', mapped, 201)
 })
 
+tasksRouter.post('/:id/reopen', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!req.user) return fail(res, 'Unauthorized', 401)
+  const result = await reopenRecord({
+    itemType: 'task',
+    itemId: id,
+    reason: String(req.body?.reason || ''),
+    toStatus: req.body?.status ? String(req.body.status) : 'Open',
+    user: req.user,
+  })
+  if (!result.ok) return fail(res, result.message, result.status)
+  const mapped = mapTask(result.row, { reopen_count: result.reopen_count })
+  return okMessage(res, 'Task re-opened', req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
+})
+
 tasksRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const existing = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL`, [id])
   if (!existing) return fail(res, 'Task not found', 404)
   if (!req.user) return fail(res, 'Unauthorized', 401)
+  if (req.body?.status != null && isReopenAttempt(existing.status, req.body.status)) {
+    return fail(res, 'Closed records must be re-opened with a reason. Use Re-open.', 422)
+  }
   const filtered = await filterWritableUpdate({
     user: req.user,
     itemType: 'task',

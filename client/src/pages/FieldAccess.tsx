@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import { Alert, EmptyState, Insights, PageHead, Pill } from './AdminKit'
+import { Alert } from './AdminKit'
+import { StatusPill } from './WorkspaceKit'
+import { FrChips, FrField, FrHeader, FrKpi, FrPage, FrPanel } from './FormReference'
 
 export type EditPolicy = {
   mode: 'full' | 'assignee' | 'none'
@@ -186,13 +188,6 @@ export function RequestAccessModal({
   )
 }
 
-function tone(status: string): 'green' | 'rose' | 'amber' | 'blue' | 'slate' {
-  if (status === 'granted') return 'green'
-  if (status === 'denied' || status === 'expired') return 'rose'
-  if (status === 'pending') return 'amber'
-  return 'slate'
-}
-
 export function ApprovalsPage() {
   const [tab, setTab] = useState<'inbox' | 'mine'>('inbox')
   const [inbox, setInbox] = useState<AccessRequest[]>([])
@@ -231,57 +226,90 @@ export function ApprovalsPage() {
   }
 
   return (
-    <div className="ak">
-      <PageHead title="Approvals" subtitle="L1 grants for locked name, date, and assignment fields." />
+    <FrPage>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { label: 'Approvals' }]}
+        title="Approvals"
+        count="L1 grants for locked name, date, and assignment fields"
+      />
+      <FrKpi cards={[
+        { label: 'Waiting on you', value: pending.length, tone: 'amber', icon: 'ri-shield-check-line' },
+        { label: 'Your requests', value: mine.length, icon: 'ri-lock-unlock-line' },
+      ]} />
       {err ? <Alert kind="err">{err}</Alert> : null}
       {msg ? <Alert kind="ok">{msg}</Alert> : null}
-      <Insights cards={[
-        { label: 'Waiting on you', value: pending.length, tone: 'amber', icon: 'ri-shield-check-line' },
-        { label: 'Your requests', value: mine.length, tone: 'blue', icon: 'ri-lock-unlock-line' },
-      ]} />
-      <div className="fa-tabs">
-        <button type="button" className={tab === 'inbox' ? 'is-on' : ''} onClick={() => setTab('inbox')}>Inbox</button>
-        <button type="button" className={tab === 'mine' ? 'is-on' : ''} onClick={() => setTab('mine')}>My requests</button>
-      </div>
+      <FrChips
+        items={[
+          { label: 'Inbox', count: pending.length, value: 'inbox' },
+          { label: 'My requests', count: mine.length, value: 'mine' },
+        ]}
+        value={tab}
+        onChange={(v) => setTab(v === 'mine' ? 'mine' : 'inbox')}
+      />
       {tab === 'inbox' ? (
-        <label className="fa-reason" style={{ maxWidth: 520, marginBottom: 12 }}>
-          <span>Decision note (optional)</span>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Shown to the requester and stored in revisions" />
-        </label>
-      ) : null}
-      {rows.length === 0 ? (
-        <EmptyState icon="ri-shield-check-line" title={tab === 'inbox' ? 'No pending requests' : 'You have not requested any field changes'} text="Assignees request locked fields here. Grants are logged on the record." />
-      ) : (
-        <div className="fa-list">
-          {rows.map((r) => (
-            <article key={r.id} className="fa-card">
-              <header>
-                <div>
-                  <b>{r.item_name || `${r.item_type} #${r.item_id}`}</b>
-                  <p>{r.field_labels.join(', ') || 'Locked fields'}</p>
-                </div>
-                <Pill tone={tone(r.status)}>{r.status}</Pill>
-              </header>
-              <p className="fa-why">{r.reason}</p>
-              <p className="ws-sub">
-                {r.requested_by_name} · {r.created_at?.slice(0, 16).replace('T', ' ')}
-                {r.l1_name ? ` · L1 ${r.l1_name}` : ''}
-                {r.expires_at ? ` · until ${String(r.expires_at).slice(0, 16).replace('T', ' ')}` : ''}
-              </p>
-              <footer>
-                <Link className="ws-btn ghost" to={r.record_path}>Open record</Link>
-                {tab === 'inbox' && r.status === 'pending' ? (
-                  <>
-                    <button className="ws-btn" type="button" disabled={busyId === r.id} onClick={() => void decide(r.id, 'grant')}>Grant</button>
-                    <button className="ws-btn danger" type="button" disabled={busyId === r.id} onClick={() => void decide(r.id, 'deny')}>Deny</button>
-                  </>
-                ) : null}
-              </footer>
-            </article>
-          ))}
+        <div style={{ maxWidth: 520, marginBottom: 12 }}>
+          <FrField label="Decision note (optional)">
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Shown to the requester and stored in revisions" />
+          </FrField>
         </div>
-      )}
-    </div>
+      ) : null}
+      <FrPanel>
+        <div className="fr-table-wrap">
+          <table className="fr-table">
+            <thead>
+              <tr>
+                <th>Record</th>
+                <th>Fields</th>
+                <th>Requested by</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="fr-empty">
+                    {tab === 'inbox' ? 'No pending requests' : 'You have not requested any field changes'}
+                  </td>
+                </tr>
+              ) : rows.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <span className="fr-name-cell">
+                      <Link className="fr-name" to={r.record_path}>{r.item_name || `${r.item_type} #${r.item_id}`}</Link>
+                      <span className="fr-sub">{r.reason || 'Locked fields'}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <span className="fr-name-cell">
+                      <span className="fr-name">{r.field_labels.join(', ') || '—'}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <span className="fr-name-cell">
+                      <span className="fr-name">{r.requested_by_name}</span>
+                      <span className="fr-sub">{r.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                    </span>
+                  </td>
+                  <td><StatusPill value={r.status} /></td>
+                  <td>
+                    <span className="ak-acts">
+                      <Link className="ws-btn ghost" to={r.record_path}>Open</Link>
+                      {tab === 'inbox' && r.status === 'pending' ? (
+                        <>
+                          <button className="ws-btn" type="button" disabled={busyId === r.id} onClick={() => void decide(r.id, 'grant')}>Grant</button>
+                          <button className="ws-btn danger" type="button" disabled={busyId === r.id} onClick={() => void decide(r.id, 'deny')}>Deny</button>
+                        </>
+                      ) : null}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </FrPanel>
+    </FrPage>
   )
 }
 

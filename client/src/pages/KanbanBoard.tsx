@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { tasksApi } from '../api/client'
-import { StatusPill, fmt, initials } from './WorkspaceKit'
+import { ReopenBadge, ReopenDialog, StatusPill, fmt, initials, isClosedStatus } from './WorkspaceKit'
 import { navState } from '../lib/recordNav'
 import { FrPager } from './FormReference'
 
@@ -16,7 +16,7 @@ export const BOARD_PAGE_SIZE = 20
 
 export function boardColumn(status: unknown) {
   const s = String(status || '').toLowerCase()
-  if (s.includes('complete') || s.includes('closed') || s.includes('done')) return 'Completed'
+  if (s.includes('complete') || s.includes('closed') || s.includes('done') || s.includes('cancel')) return 'Completed'
   if (s.includes('hold') || s.includes('block')) return 'On Hold'
   if (s.includes('progress') || s.includes('review') || s.includes('active')) return 'In Progress'
   return 'Open'
@@ -25,12 +25,14 @@ export function boardColumn(status: unknown) {
 type Card = Record<string, unknown>
 
 export default function KanbanBoard({
-  items, onChanged, hrefFor, onMove, filterKey,
+  items, onChanged, hrefFor, onMove, onReopen, noun = 'task', filterKey,
 }: {
   items: Card[]
   onChanged?: () => void
   hrefFor?: (row: Card) => string
   onMove?: (row: Card, status: string) => Promise<void>
+  onReopen?: (row: Card, reason: string, status: string) => Promise<void>
+  noun?: string
   filterKey?: string
   from?: string
 }) {
@@ -39,6 +41,9 @@ export default function KanbanBoard({
   const hereState = navState(loc)
   const [over, setOver] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [pending, setPending] = useState<{ row: Card; status: string } | null>(null)
+  const [reopenBusy, setReopenBusy] = useState(false)
+  const [reopenErr, setReopenErr] = useState('')
   const [page, setPage] = useState(1)
   const grouped = useMemo(() => {
     const map: Record<string, Card[]> = { Open: [], 'In Progress': [], 'On Hold': [], Completed: [] }
@@ -54,6 +59,11 @@ export default function KanbanBoard({
   async function move(row: Card, status: string) {
     const id = String(row.id || '')
     if (!id || boardColumn(row.status) === status) return
+    if (isClosedStatus(row.status) && !isClosedStatus(status)) {
+      setReopenErr('')
+      setPending({ row, status })
+      return
+    }
     setBusyId(id)
     try {
       if (onMove) await onMove(row, status)
@@ -61,6 +71,22 @@ export default function KanbanBoard({
       onChanged?.()
     } finally {
       setBusyId(null)
+    }
+  }
+
+  async function confirmReopen(reason: string) {
+    if (!pending) return
+    setReopenBusy(true)
+    setReopenErr('')
+    try {
+      if (onReopen) await onReopen(pending.row, reason, pending.status)
+      else await tasksApi.reopen(String(pending.row.id), reason, pending.status)
+      setPending(null)
+      onChanged?.()
+    } catch (e) {
+      setReopenErr(e instanceof Error ? e.message : 'Could not re-open')
+    } finally {
+      setReopenBusy(false)
     }
   }
 
@@ -112,6 +138,7 @@ export default function KanbanBoard({
                       <p className="ws-due">{row.end_date ? `Due ${fmt(row.end_date)}` : 'No due date'}</p>
                       <div className="ws-card-meta">
                         <StatusPill value={row.priority || row.status} />
+                        {Number(row.reopen_count) > 0 ? <ReopenBadge count={row.reopen_count} /> : null}
                         <span className="ws-chip" style={{ padding: '2px 6px 2px 2px' }}>
                           <span className="ws-ava">{initials(owner)}</span>
                           {String(owner || 'Unassigned').split(' ')[0]}
@@ -126,6 +153,14 @@ export default function KanbanBoard({
         })}
       </div>
       <FrPager page={safePage} pages={pages} total={items.length} pageSize={BOARD_PAGE_SIZE} unit="column" onPage={setPage} />
+      <ReopenDialog
+        open={Boolean(pending)}
+        noun={noun}
+        busy={reopenBusy}
+        error={reopenErr}
+        onClose={() => { if (!reopenBusy) setPending(null) }}
+        onSubmit={confirmReopen}
+      />
     </div>
   )
 }

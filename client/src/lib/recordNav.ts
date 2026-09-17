@@ -133,13 +133,11 @@ export function backNav(opts: {
   isEmployee: boolean
   parent?: { to: string; label: string } | null
 }) {
-  const origin = defaultList(opts.kind, opts.isEmployee)
   const from = fromState(opts.loc)
-  const parent = opts.parent
-  const to = from || parent?.to || origin
+  const origin = defaultList(opts.kind, opts.isEmployee)
+  const to = from || origin
   const state = stateFor(to, opts.loc)
-  let label = originLabel(to, 'Back')
-  if (parent && samePlace(to, parent.to)) label = parent.label
+  const label = originLabel(to, 'Back')
   return { to, label, state, from, origin }
 }
 

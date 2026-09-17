@@ -3,8 +3,10 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
+import { projectRowVisible, resolveVisibility, taskRowVisible, visibilitySql } from '../services/recordVisibility.js'
 
 export const projectsRouter = Router()
 
@@ -50,6 +52,10 @@ projectsRouter.get('/', async (req, res) => {
   const q = String(req.query.search || '').trim()
   let sql = `SELECT * FROM projects WHERE deleted_at IS NULL`
   const params: unknown[] = []
+  const vis = await resolveVisibility(req.user)
+  const clause = visibilitySql(vis, 'project')
+  sql += clause.sql
+  params.push(...clause.params)
   if (req.query.status) { sql += ' AND status = ?'; params.push(String(req.query.status)) }
   if (req.query.category) { sql += ' AND category = ?'; params.push(String(req.query.category)) }
   if (req.query.rag) { sql += ' AND rag LIKE ?'; params.push(`%${req.query.rag}%`) }
@@ -69,8 +75,10 @@ projectsRouter.get('/', async (req, res) => {
 
 projectsRouter.get('/selectlist', async (req, res) => {
   const q = String(req.query.search || '').trim()
-  let sql = `SELECT id, CONCAT(COALESCE(kissflow_id,''), ' — ', name) as text FROM projects WHERE deleted_at IS NULL`
-  const params: unknown[] = []
+  const vis = await resolveVisibility(req.user)
+  const clause = visibilitySql(vis, 'project')
+  let sql = `SELECT id, CONCAT(COALESCE(kissflow_id,''), ' — ', name) as text FROM projects WHERE deleted_at IS NULL${clause.sql}`
+  const params: unknown[] = [...clause.params]
   if (q) { sql += ' AND (name LIKE ? OR kissflow_id LIKE ? OR project_code LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`) }
   sql += ' ORDER BY name ASC LIMIT 500'
   return res.json({ results: await all(sql, params), pagination: { more: false } })
@@ -85,19 +93,29 @@ projectsRouter.get('/:id', async (req, res) => {
       [key, key],
     )
   if (!row) return fail(res, 'Project not found', 404)
-  const [tasks, timeline, revisions] = await Promise.all([
-    all(`SELECT id, task_code, name, status, priority, assigned_to_name, start_date, end_date
+  const vis = await resolveVisibility(req.user)
+  const [taskRows, timeline, revisions] = await Promise.all([
+    all(`SELECT id, task_code, name, status, priority, assigned_to_name, assigned_to_employee_id, start_date, end_date, l1_manager_email, l2_manager_email, created_by_name, secondary_assignee_name
          FROM tasks WHERE project_id = ? AND deleted_at IS NULL ORDER BY id DESC`, [row.id]),
     all(`SELECT * FROM project_timeline_history WHERE project_id = ? ORDER BY id DESC`, [row.id]),
     listRevisions('project', Number(row.id)),
   ])
+  const steward = vis.unrestricted || projectRowVisible(vis, row)
+  const scopedTaskRows = steward ? taskRows : taskRows.filter((t) => taskRowVisible(vis, t))
+  if (!steward && !scopedTaskRows.length) return fail(res, 'Project not found', 404)
+  const tasks = await attachRevisionCounts('task', scopedTaskRows)
   const counts = await get<{ open_tasks: number; done_tasks: number }>(`
     SELECT
       SUM(CASE WHEN status NOT IN ('Completed','Closed','Cancelled') THEN 1 ELSE 0 END) as open_tasks,
       SUM(CASE WHEN status IN ('Completed','Closed') THEN 1 ELSE 0 END) as done_tasks
     FROM tasks WHERE project_id = ? AND deleted_at IS NULL
   `, [row.id])
-  const mapped = mapProject(row, { tasks, timeline, revisions, revision_count: revisions.length, task_counts: counts })
+  const mapped = mapProject(row, {
+    tasks, timeline, revisions,
+    revision_count: revisions.length,
+    reopen_count: revisions.filter(isReopenRevision).length,
+    task_counts: counts,
+  })
   return okItem(res, req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
 })
 
@@ -178,11 +196,29 @@ projectsRouter.post('/', async (req, res) => {
   return okMessage(res, 'Project created', mapped, 201)
 })
 
+projectsRouter.post('/:id/reopen', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!req.user) return fail(res, 'Unauthorized', 401)
+  const result = await reopenRecord({
+    itemType: 'project',
+    itemId: id,
+    reason: String(req.body?.reason || ''),
+    toStatus: req.body?.status ? String(req.body.status) : 'Open',
+    user: req.user,
+  })
+  if (!result.ok) return fail(res, result.message, result.status)
+  const mapped = mapProject(result.row, { reopen_count: result.reopen_count })
+  return okMessage(res, 'Project re-opened', req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
+})
+
 projectsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const existing = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL`, [id])
   if (!existing) return fail(res, 'Project not found', 404)
   if (!req.user) return fail(res, 'Unauthorized', 401)
+  if (req.body?.status != null && isReopenAttempt(existing.status, req.body.status)) {
+    return fail(res, 'Closed records must be re-opened with a reason. Use Re-open.', 422)
+  }
   const filtered = await filterWritableUpdate({
     user: req.user,
     itemType: 'project',

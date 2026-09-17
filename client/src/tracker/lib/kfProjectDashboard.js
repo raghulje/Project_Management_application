@@ -566,6 +566,7 @@ export function personMatches(user, displayName) {
   const userEmail = String(user.Email || user.email || user.User_email || '').trim().toLowerCase();
   const userName = String(user.Name || user.DisplayName || user.FullName || '').trim().toLowerCase();
   const userFirstName = String(user.FirstName || '').trim().toLowerCase();
+  const compact = (s) => String(s || '').toLowerCase().replace(/[\s.]+/g, '');
 
   // Accept both plain string and rich refs { id, email, name } from mapped rows.
   const personRef = typeof displayName === 'object'
@@ -580,9 +581,10 @@ export function personMatches(user, displayName) {
   if (userEmail && targetEmail && userEmail === targetEmail) return true;
   // 2) Exact/near-exact display name match.
   if (userName && targetName && (userName === targetName || userName.includes(targetName) || targetName.includes(userName))) return true;
+  if (compact(userName) && compact(targetName) && compact(userName) === compact(targetName)) return true;
   const userToken = (userFirstName || userName).split(/\s+/)[0] || '';
   const targetToken = targetName.split(/\s+/)[0] || '';
-  if (userToken && targetToken && userToken === targetToken) return true;
+  if (userToken && targetToken && userToken === targetToken && userToken.length > 2) return true;
   return false;
 }
 

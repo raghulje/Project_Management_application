@@ -40,7 +40,14 @@ export default function BoardPage() {
         <Link className="ws-btn ghost" to="/tasks" state={hereState}><i className="ri-list-check-2" />List view</Link>
         <Link className="ws-btn" to="/tasks/new" state={hereState}><i className="ri-add-line" />New task</Link>
       </FrHeader>
-      <KanbanBoard items={rows} filterKey={`${q}|${projectId}`} onChanged={() => void load()} />
+      <KanbanBoard
+        items={rows}
+        filterKey={`${q}|${projectId}`}
+        noun="task"
+        onMove={(row, status) => tasksApi.update(String(row.id), { status })}
+        onReopen={(row, reason, status) => tasksApi.reopen(String(row.id), reason, status)}
+        onChanged={() => void load()}
+      />
     </FrPage>
   )
 }

@@ -1,8 +1,9 @@
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { dashboardApi, employeesApi } from '../api/client'
-import { initials, RecordTrail } from './WorkspaceKit'
-import { FrAcc, FrChips, FrField, FrGrid, FrHeader, FrPage, FrPager, FrPanel, FrSection, FrValue } from './FormReference'
+import { OwnerAvatar, StatusPill } from './WorkspaceKit'
+import { Alert } from './AdminKit'
+import { FrAcc, FrChips, FrField, FrGrid, FrHeader, FrKpi, FrPage, FrPager, FrPanel, FrSection, FrUpload, FrValue } from './FormReference'
 
 type Row = Record<string, unknown>
 
@@ -80,20 +81,24 @@ export function EmployeesList() {
 
   return (
     <FrPage>
-      <FrHeader title="Employees" count={loading ? 'Loading…' : `${total} total records`}>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { label: 'Employees' }]}
+        title="Employees"
+        count={loading ? 'Loading...' : `${total} total records`}
+      >
         <input className="fr-search" placeholder="Search records..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <button className="ws-btn ghost" type="button" disabled={syncing} onClick={() => void employeesApi.syncMasters().then(() => setMsg('Masters rebuilt'))}>
           Rebuild masters
         </button>
         <button className="ws-btn ghost" type="button" disabled={syncing} onClick={() => void sync()}>
           <i className={syncing ? 'ri-loader-4-line' : 'ri-refresh-line'} />
-          {syncing ? 'Syncing…' : 'Sync from HRMS'}
+          {syncing ? 'Syncing...' : 'Sync from HRMS'}
         </button>
         <Link className="ws-btn ghost" to="/employees/import"><i className="ri-file-upload-line" />Import</Link>
         <Link className="ws-btn" to="/employees/new"><i className="ri-add-line" />Create</Link>
       </FrHeader>
-      {err ? <div className="pc-alert">{err}</div> : null}
-      {msg ? <p className="muted">{msg}</p> : null}
+      {err ? <Alert kind="err">{err}</Alert> : null}
+      {msg ? <Alert kind="ok">{msg}</Alert> : null}
       <FrChips
         items={[
           { label: 'All', count: insights.employees || total, value: 'All' },
@@ -124,30 +129,41 @@ export function EmployeesList() {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={8} className="fr-empty">{loading ? 'Loading…' : 'No records found'}</td></tr>
+                <tr><td colSpan={8} className="fr-empty">{loading ? 'Loading...' : 'No records found'}</td></tr>
               ) : rows.map((r) => (
                 <tr key={String(r.id)} className="is-clickable" onClick={() => nav(`/employees/${r.id}`)}>
                   <td><Link to={`/employees/${r.id}`}>{fmt(r.employee_code)}</Link></td>
                   <td>
-                    <Link to={`/employees/${r.id}`}>
-                      <span className="ws-ava" style={{ marginRight: 8 }}>{initials(r.name)}</span>
-                      {fmt(r.name)}
-                    </Link>
+                    <span className="fr-owner-row">
+                      <OwnerAvatar name={r.name} />
+                      <span className="fr-name-cell">
+                        <Link to={`/employees/${r.id}`} className="fr-name">{fmt(r.name)}</Link>
+                        <span className="fr-sub">{fmt(r.email)}</span>
+                      </span>
+                    </span>
                   </td>
                   <td>{fmt(r.email)}</td>
-                  <td>{fmt(r.department_name)}</td>
-                  <td>{fmt(r.designation)}</td>
-                  <td>{fmt(r.refex_company_name)}</td>
-                  <td>{fmt(r.refex_location)}</td>
                   <td>
-                    <span className={`ws-pri ${isActive(r) ? 'done' : 'hold'}`}>{fmt(r.employment_status_description || (isActive(r) ? 'Active' : 'Inactive'))}</span>
+                    <span className="fr-name-cell"><span className="fr-name">{fmt(r.department_name)}</span></span>
+                  </td>
+                  <td>
+                    <span className="fr-name-cell"><span className="fr-name">{fmt(r.designation)}</span></span>
+                  </td>
+                  <td>
+                    <span className="fr-name-cell"><span className="fr-name">{fmt(r.refex_company_name)}</span></span>
+                  </td>
+                  <td>
+                    <span className="fr-name-cell"><span className="fr-name">{fmt(r.refex_location)}</span></span>
+                  </td>
+                  <td>
+                    <StatusPill value={r.employment_status_description || (isActive(r) ? 'Active' : 'Inactive')} />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <FrPager page={page} pages={pages} total={total} onPage={setPage} />
+        <FrPager page={page} pages={pages} total={total} pageSize={pageSize} onPage={setPage} />
       </FrPanel>
     </FrPage>
   )
@@ -164,12 +180,16 @@ export function EmployeeDetail() {
     employeesApi.get(id).then(setRow).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load'))
   }, [id])
 
-  if (err) return <p className="muted">{err}</p>
-  if (!row) return <p>Loading…</p>
+  if (err) return <FrPage><FrHeader crumbs={[{ to: '/admin', label: 'Admin' }, { to: '/employees', label: 'Employees' }, { label: 'Employee' }]} title="Employee" /><Alert kind="err">{err}</Alert></FrPage>
+  if (!row) return <FrPage><FrHeader crumbs={[{ to: '/admin', label: 'Admin' }, { to: '/employees', label: 'Employees' }, { label: 'Employee' }]} title="Employee" count="Loading..." /></FrPage>
 
   return (
     <FrPage>
-      <FrHeader kicker="Employees" kickerTo="/employees" title={fmt(row.name)} badge={fmt(row.employment_status_description)}>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { to: '/employees', label: 'Employees' }, { label: fmt(row.name) }]}
+        title={fmt(row.name)}
+        badge={<StatusPill value={row.employment_status_description} />}
+      >
         <Link className="ws-btn ghost" to={`/employees/${row.id}/edit`}><i className="ri-pencil-line" />Edit</Link>
         <button className="ws-btn danger" type="button" onClick={async () => {
           if (!confirm('Delete this employee?')) return
@@ -278,6 +298,7 @@ export function EmployeeForm() {
     <FrPage>
       <FrHeader
         crumbs={[
+          { to: '/admin', label: 'Admin' },
           { to: '/employees', label: 'Employees' },
           ...(id ? [{ to: `/employees/${id}`, label: [form.first_name, form.last_name].filter(Boolean).join(' ') || 'Employee' }] : []),
           { label: id ? 'Edit' : 'Create' },
@@ -285,9 +306,9 @@ export function EmployeeForm() {
         title={id ? 'Edit employee' : 'Create employee'}
       >
         <button className="ws-btn ghost" type="button" onClick={() => nav(id ? `/employees/${id}` : '/employees')}>Cancel</button>
-        <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</button>
+        <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving...' : 'Save'}</button>
       </FrHeader>
-      {err ? <div className="pc-alert">{err}</div> : null}
+      {err ? <Alert kind="err">{err}</Alert> : null}
       <FrAcc>
         <FrSection label="Identity">
           <FrGrid>
@@ -361,63 +382,51 @@ export function EmployeeImport() {
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null)
 
   return (
-    <div className="pc">
-      <header className="pc-top">
-        <div>
-          <RecordTrail crumbs={[{ to: '/', label: 'Home' }, { to: '/employees', label: 'Employees' }, { label: 'Import' }]} />
-          <Link className="ws-back" to="/employees"><i className="ri-arrow-left-line" />All employees</Link>
-          <h1>Import employees</h1>
-          <p>Adrenalin Live API or Excel / CSV.</p>
-        </div>
-        <div className="pc-top-actions">
-          <button className="ws-btn ghost" type="button" onClick={() => nav('/employees')}>Discard</button>
-        </div>
-      </header>
-      {err ? <div className="pc-alert">{err}</div> : null}
-      <div className="pc-layout">
-        <div className="pc-main">
-          <section className="pc-card">
-            <h2>Sync from Adrenalin</h2>
-            <p className="ws-sub" style={{ marginTop: -8, marginBottom: 14 }}>Pulls the live directory and upserts by employee ID.</p>
-            <button className="ws-btn" type="button" disabled={busy || syncing} onClick={async () => {
-              setSyncing(true); setErr(''); setSummary(null)
-              try { setSummary((await employeesApi.sync()).payload) } catch (e) { setErr(e instanceof Error ? e.message : 'Sync failed') }
-              finally { setSyncing(false) }
-            }}>{syncing ? 'Syncing…' : 'Sync from HRMS'}</button>
-          </section>
-          <section className="pc-card">
-            <h2>Upload file</h2>
-            <p className="ws-sub" style={{ marginTop: -8, marginBottom: 14 }}>Accepts .xlsx, .xls, or .csv using the Refex HRMS export columns.</p>
-            <label className="pc-field">
-              <span>Spreadsheet</span>
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            </label>
-          </section>
-        </div>
-        <aside className="pc-side">
-          {summary ? (
-            <section className="pc-card">
-              <h2>Result</h2>
-              <p className="ws-sub">Created {String(summary.created || 0)} · Updated {String(summary.updated || 0)} · Skipped {String(summary.skipped || 0)}</p>
-              <Link className="ws-btn" to="/employees" style={{ marginTop: 12 }}>View employees</Link>
-            </section>
-          ) : (
-            <section className="pc-card">
-              <h2>Status</h2>
-              <p className="ws-sub">{file ? file.name : 'No file selected yet.'}</p>
-            </section>
-          )}
-        </aside>
-      </div>
-      <footer className="pc-foot">
+    <FrPage>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { to: '/employees', label: 'Employees' }, { label: 'Import' }]}
+        title="Import employees"
+        count="Adrenalin Live API or Excel / CSV"
+      >
         <button className="ws-btn ghost" type="button" onClick={() => nav('/employees')}>Discard</button>
         <button className="ws-btn" type="button" disabled={!file || busy} onClick={async () => {
           if (!file) return
           setBusy(true); setErr(''); setSummary(null)
           try { setSummary((await employeesApi.importFile(file)).payload) } catch (e) { setErr(e instanceof Error ? e.message : 'Import failed') }
           finally { setBusy(false) }
-        }}>{busy ? 'Importing…' : 'Submit'}</button>
-      </footer>
-    </div>
+        }}>{busy ? 'Importing...' : 'Submit'}</button>
+      </FrHeader>
+      {err ? <Alert kind="err">{err}</Alert> : null}
+      {summary ? (
+        <FrKpi cards={[
+          { label: 'Created', value: Number(summary.created || 0), tone: 'green', icon: 'ri-user-add-line' },
+          { label: 'Updated', value: Number(summary.updated || 0), icon: 'ri-refresh-line' },
+          { label: 'Skipped', value: Number(summary.skipped || 0), tone: 'amber', icon: 'ri-skip-forward-line' },
+        ]} />
+      ) : null}
+      <FrAcc>
+        <FrSection label="Sync from Adrenalin">
+          <p className="fr-sub" style={{ margin: '0 0 14px' }}>Pulls the live directory and upserts by employee ID.</p>
+          <button className="ws-btn" type="button" disabled={busy || syncing} onClick={async () => {
+            setSyncing(true); setErr(''); setSummary(null)
+            try { setSummary((await employeesApi.sync()).payload) } catch (e) { setErr(e instanceof Error ? e.message : 'Sync failed') }
+            finally { setSyncing(false) }
+          }}>{syncing ? 'Syncing...' : 'Sync from HRMS'}</button>
+        </FrSection>
+        <FrSection label="Upload file">
+          <p className="fr-sub" style={{ margin: '0 0 14px' }}>Accepts .xlsx, .xls, or .csv using the Refex HRMS export columns.</p>
+          <FrGrid>
+            <FrField label="Spreadsheet" span={2}>
+              <FrUpload file={file} accept=".xlsx,.xls,.csv" hint="Excel or CSV" onPick={setFile} onClear={() => setFile(null)} />
+            </FrField>
+          </FrGrid>
+        </FrSection>
+      </FrAcc>
+      {summary ? (
+        <p className="fr-sub" style={{ marginTop: 8 }}>
+          <Link to="/employees">View employees</Link>
+        </p>
+      ) : null}
+    </FrPage>
   )
 }

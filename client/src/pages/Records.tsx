@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { projectsApi, subtasksApi, tasksApi } from '../api/client'
 import ResourceTable from '../components/ResourceTable'
-import { RevisionLog, StatusPill, fmt } from './WorkspaceKit'
+import { isClosedStatus, ReopenBadge, ReopenDialog, RevisionLog, StatusPill, fmt } from './WorkspaceKit'
 import KanbanBoard from './KanbanBoard'
 import { useAuth } from '../api/AuthContext'
 import { crumbState, navState, pageCrumbs, smartBack } from '../lib/recordNav'
@@ -19,6 +19,7 @@ function RelatedTable({
 }) {
   const loc = useLocation()
   const from = navState(loc)
+  const wrapKeys = new Set(['name', 'project_name', 'task_name', 'title', 'detail', 'notes'])
   return (
     <div className="fr-table-wrap">
       <table className="fr-table">
@@ -32,7 +33,11 @@ function RelatedTable({
             <tr key={String(r.id)}>
               {columns.map((c) => {
                 const href = c.href?.(r)
-                const val = c.key === 'status' ? <StatusPill value={r[c.key]} /> : fmt(r[c.key])
+                const val = c.key === 'status'
+                  ? <StatusPill value={r[c.key]} />
+                  : wrapKeys.has(c.key)
+                    ? <span className="fr-name-cell"><span className="fr-name">{fmt(r[c.key])}</span></span>
+                    : fmt(r[c.key])
                 return <td key={c.key}>{href ? <Link to={href} state={from}>{val}</Link> : val}</td>
               })}
             </tr>
@@ -40,6 +45,47 @@ function RelatedTable({
         </tbody>
       </table>
     </div>
+  )
+}
+
+function RecordReopen({
+  noun, row, onDone, reopen,
+}: {
+  noun: string
+  row: Record<string, unknown>
+  onDone: () => void
+  reopen: (id: string, reason: string) => Promise<unknown>
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (!isClosedStatus(row.status)) return null
+  return (
+    <>
+      <button className="ws-btn" type="button" onClick={() => { setErr(''); setOpen(true) }}>
+        <i className="ri-restart-line" />Re-open
+      </button>
+      <ReopenDialog
+        open={open}
+        noun={noun}
+        busy={busy}
+        error={err}
+        onClose={() => setOpen(false)}
+        onSubmit={async (reason) => {
+          setBusy(true)
+          setErr('')
+          try {
+            await reopen(String(row.id), reason)
+            setOpen(false)
+            onDone()
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Could not re-open')
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
+    </>
   )
 }
 
@@ -74,8 +120,10 @@ export function ProjectsList() {
         <KanbanBoard
           items={rows}
           filterKey={q}
+          noun="project"
           hrefFor={(r) => `/projects/${r.id}`}
           onMove={(row, status) => projectsApi.update(String(row.id), { status })}
+          onReopen={(row, reason, status) => projectsApi.reopen(String(row.id), reason, status)}
           onChanged={() => void load()}
         />
       </FrPage>
@@ -103,6 +151,7 @@ export function ProjectsList() {
         { key: 'start_date', label: 'Start Date', kind: 'date' },
         { key: 'end_date', label: 'End Date', kind: 'date' },
         { key: 'revision_count', label: 'Revised', kind: 'revisions' },
+        { key: 'reopen_count', label: 'Re-opened', kind: 'reopen' },
         { key: 'completion', label: 'Progress', kind: 'progress' },
         { key: 'rag', label: 'RAG Status', kind: 'rag' },
         { key: 'status', label: 'Status' },
@@ -136,9 +185,16 @@ export function ProjectDetail() {
     <FrPage>
       <FrHeader
         crumbs={crumbs}
+        backTo={trail.backTo}
+        backLabel={trail.backLabel}
+        backState={trail.backState}
         title={String(row.name)}
-        badge={fmt(row.status)}
+        badge={<>
+          <StatusPill value={row.status} />
+          {Number(row.reopen_count) > 0 ? <ReopenBadge count={row.reopen_count} /> : null}
+        </>}
       >
+        <RecordReopen noun="project" row={row} reopen={projectsApi.reopen} onDone={() => void load()} />
         <Link className="ws-btn" to={`/tasks/new?project_id=${recordId}`} state={hereState}><i className="ri-add-line" />New task</Link>
         <Link className="ws-btn ghost" to={`/projects/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
         <button className="ws-btn danger" type="button" onClick={async () => {
@@ -219,9 +275,15 @@ export function ProjectDetail() {
           />
         </FrSection>
         <FrSection label="Board" count={tasks.length}>
-          <KanbanBoard items={tasks} onChanged={() => void load()} />
+          <KanbanBoard
+            items={tasks}
+            noun="task"
+            onMove={(row, status) => tasksApi.update(String(row.id), { status })}
+            onReopen={(row, reason, status) => tasksApi.reopen(String(row.id), reason, status)}
+            onChanged={() => void load()}
+          />
         </FrSection>
-        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+        <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
       </FrAcc>
@@ -259,11 +321,12 @@ export function TasksList() {
       }}
       columns={[
         { key: 'name', label: 'Task Name', kind: 'name', subKey: 'task_code', href: (r) => `/tasks/${r.id}` },
-        { key: 'project_name', label: 'Project', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
+        { key: 'project_name', label: 'Project', kind: 'text', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
         { key: 'assigned_to_name', label: 'Assigned To', kind: 'person' },
         { key: 'start_date', label: 'Start Date', kind: 'date' },
         { key: 'end_date', label: 'End Date', kind: 'date' },
         { key: 'revision_count', label: 'Revised', kind: 'revisions' },
+        { key: 'reopen_count', label: 'Re-opened', kind: 'reopen' },
         { key: 'status', label: 'Status' },
       ]}
     />
@@ -277,10 +340,11 @@ export function TaskDetail() {
   const { isEmployee } = useAuth()
   const [row, setRow] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
-  useEffect(() => {
+  function load() {
     if (!id) return
     tasksApi.get(id).then(setRow).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load'))
-  }, [id])
+  }
+  useEffect(() => { load() }, [id])
   if (err) return <p className="muted">{err}</p>
   if (!row) return <p>Loading…</p>
   const recordId = String(row.id)
@@ -303,9 +367,16 @@ export function TaskDetail() {
     <FrPage>
       <FrHeader
         crumbs={crumbs}
+        backTo={trail.backTo}
+        backLabel={trail.backLabel}
+        backState={trail.backState}
         title={String(row.name)}
-        badge={fmt(row.status)}
+        badge={<>
+          <StatusPill value={row.status} />
+          {Number(row.reopen_count) > 0 ? <ReopenBadge count={row.reopen_count} /> : null}
+        </>}
       >
+        <RecordReopen noun="task" row={row} reopen={tasksApi.reopen} onDone={load} />
         <Link className="ws-btn" to={`/subtasks/new?task_id=${recordId}`} state={hereState}><i className="ri-add-line" />New subtask</Link>
         <Link className="ws-btn ghost" to={`/tasks/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
         <button className="ws-btn danger" type="button" onClick={async () => {
@@ -348,7 +419,7 @@ export function TaskDetail() {
             ]}
           />
         </FrSection>
-        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+        <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
       </FrAcc>
@@ -383,12 +454,13 @@ export function SubtasksList() {
       }}
       columns={[
         { key: 'name', label: 'Subtask Name', kind: 'name', href: (r) => `/subtasks/${r.id}` },
-        { key: 'task_name', label: 'Task', href: (r) => r.task_id ? `/tasks/${r.task_id}` : '/tasks' },
-        { key: 'project_name', label: 'Project', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
+        { key: 'task_name', label: 'Task', kind: 'text', href: (r) => r.task_id ? `/tasks/${r.task_id}` : '/tasks' },
+        { key: 'project_name', label: 'Project', kind: 'text', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
         { key: 'assigned_to_name', label: 'Assigned To', kind: 'person' },
         { key: 'start_date', label: 'Start Date', kind: 'date' },
         { key: 'end_date', label: 'End Date', kind: 'date' },
         { key: 'revision_count', label: 'Revised', kind: 'revisions' },
+        { key: 'reopen_count', label: 'Re-opened', kind: 'reopen' },
         { key: 'status', label: 'Status' },
       ]}
     />
@@ -402,10 +474,11 @@ export function SubtaskDetail() {
   const { isEmployee } = useAuth()
   const [row, setRow] = useState<Record<string, unknown> | null>(null)
   const [err, setErr] = useState('')
-  useEffect(() => {
+  function load() {
     if (!id) return
     subtasksApi.get(id).then(setRow).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load'))
-  }, [id])
+  }
+  useEffect(() => { load() }, [id])
   if (err) return <p className="muted">{err}</p>
   if (!row) return <p>Loading…</p>
   const recordId = String(row.id)
@@ -432,9 +505,16 @@ export function SubtaskDetail() {
     <FrPage>
       <FrHeader
         crumbs={crumbs}
+        backTo={trail.backTo}
+        backLabel={trail.backLabel}
+        backState={trail.backState}
         title={String(row.name)}
-        badge={fmt(row.status)}
+        badge={<>
+          <StatusPill value={row.status} />
+          {Number(row.reopen_count) > 0 ? <ReopenBadge count={row.reopen_count} /> : null}
+        </>}
       >
+        <RecordReopen noun="subtask" row={row} reopen={subtasksApi.reopen} onDone={load} />
         <Link className="ws-btn ghost" to={`/subtasks/${recordId}/edit`} state={hereState}><i className="ri-pencil-line" />Edit</Link>
         <button className="ws-btn danger" type="button" onClick={async () => {
           if (!confirm('Delete this subtask?')) return
@@ -463,7 +543,7 @@ export function SubtaskDetail() {
             <FrValue label="Summary" span={4}>{fmt(row.summary)}</FrValue>
           </FrGrid>
         </FrSection>
-        <FrSection label="Revisions" count={Number(row.revision_count || revs.length || 0)}>
+        <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
       </FrAcc>

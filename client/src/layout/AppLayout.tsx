@@ -26,14 +26,15 @@ export default function AppLayout({ children, embed }: { children?: ReactNode; e
   }, [loc.pathname])
 
   useEffect(() => {
-    window.__pmNavigate = (path: string) => {
-      nav(path, { state: navState(loc) })
+    window.__pmNavigate = (path: string, extra?: { from?: string }) => {
+      const state = navState(loc)
+      nav(path, { state: extra?.from ? { ...state, from: extra.from } : state })
     }
     return () => { delete window.__pmNavigate }
   }, [nav, loc])
 
-  const leadership = isAdmin || isLeadership
-  const employeeOnly = isEmployee && !leadership
+  const employeeOnly = isEmployee
+  const leadership = (isAdmin || isLeadership) && !isEmployee
 
   const work: Item[] = leadership
     ? [

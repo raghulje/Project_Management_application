@@ -11,6 +11,7 @@ import WsSelect from './WsSelect'
 import WsDate from './WsDate'
 import PersonPicker from './PersonPicker'
 import { defaultList, fromState, pageCrumbs, stateFor } from '../lib/recordNav'
+import { isClosedStatus, ReopenAction, ReopenBadge } from './WorkspaceKit'
 import { FrAcc, FrField, FrFoot, FrGrid, FrSheet, FrSheetBody, FrSheetHead, FrSheetMain, FrSection } from './FormReference'
 
 export default function SubtaskComposer() {
@@ -35,6 +36,7 @@ export default function SubtaskComposer() {
     start_date: '',
     end_date: '',
   })
+  const [reopenCount, setReopenCount] = useState(0)
 
   useEffect(() => {
     tasksApi.selectlist().then((r) => {
@@ -56,6 +58,7 @@ export default function SubtaskComposer() {
         start_date: dateInput(r.start_date),
         end_date: dateInput(r.end_date),
       })
+      setReopenCount(Number(r.reopen_count || 0))
     })
   }, [id])
 
@@ -93,10 +96,9 @@ export default function SubtaskComposer() {
   }
 
   const from = fromState(loc)
-  const back = id
-    ? `/subtasks/${id}`
-    : (from || (form.task_id ? `/tasks/${form.task_id}?tab=subtasks` : defaultList('subtask', isEmployee)))
-  const lock = (f: string) => fieldAccess(policy, f).locked
+  const list = defaultList('subtask', isEmployee)
+  const back = from || (id ? `/subtasks/${id}` : (form.task_id ? `/tasks/${form.task_id}?tab=subtasks` : list))
+  const lock = (f: string) => fieldAccess(policy, f).locked || (f === 'status' && isClosedStatus(form.status))
   const mark = (f: string) => <AccessMark policy={policy} field={f} onRequest={req.ask} />
   const readOnly = !canSaveRecord(policy)
   const taskLabel = tasks.find((t) => t.value === form.task_id)?.label
@@ -114,6 +116,19 @@ export default function SubtaskComposer() {
   return (
     <FrSheet>
       <FrSheetHead title="Subtask" crumbs={crumbs} closeTo={back} closeState={stateFor(back, loc)}>
+        {reopenCount > 0 ? <ReopenBadge count={reopenCount} /> : null}
+        {id ? (
+          <ReopenAction
+            noun="subtask"
+            status={form.status}
+            onSubmit={async (reason) => {
+              await subtasksApi.reopen(id, reason)
+              const r = await subtasksApi.get(id)
+              set('status', String(r.status || 'Open'))
+              setReopenCount(Number(r.reopen_count || 0))
+            }}
+          />
+        ) : null}
         {policy?.can_request ? (
           <button className="ws-btn ghost" type="button" onClick={() => req.ask([])}>
             <i className="ri-lock-unlock-line" />Request change

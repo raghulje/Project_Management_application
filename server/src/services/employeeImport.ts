@@ -137,6 +137,7 @@ export type ImportSummary = {
   updated: number
   skipped: number
   errors: { row: number; message: string }[]
+  users?: { total_active: number; created: number; linked: number; skipped: number }
 }
 
 /** Upsert mapped HRMS rows (Excel or Adrenalin API) by employee_code */
@@ -191,7 +192,17 @@ export async function upsertEmployeeRows(
     }
   }
 
-  return summary
+  try {
+    const { provisionActiveEmployeeUsers } = await import('./provisionEmployeeUsers.js')
+    const users = await provisionActiveEmployeeUsers()
+    return { ...summary, users }
+  } catch (e) {
+    summary.errors.push({
+      row: 0,
+      message: `User provision skipped: ${e instanceof Error ? e.message : 'failed'}`,
+    })
+    return summary
+  }
 }
 
 export async function importEmployeesFromFile(filePath: string): Promise<ImportSummary> {

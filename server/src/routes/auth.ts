@@ -25,9 +25,16 @@ router.post('/login', async (req, res) => {
   const { password } = req.body || {}
   if (!email || !password) return fail(res, 'Email and password required')
 
+  const ident = email.toLowerCase()
   const user = await get<Record<string, unknown>>(`
-    SELECT * FROM users WHERE LOWER(email) = ? AND deleted_at IS NULL
-  `, [email.toLowerCase()])
+    SELECT * FROM users
+    WHERE deleted_at IS NULL AND (
+      LOWER(username) = ?
+      OR (email IS NOT NULL AND email != '' AND LOWER(email) = ?)
+    )
+    ORDER BY CASE WHEN email IS NOT NULL AND LOWER(email) = ? THEN 0 ELSE 1 END, id ASC
+    LIMIT 1
+  `, [ident, ident, ident])
 
   if (!user || !user.activated) return fail(res, 'Invalid credentials', 401)
   if (!bcrypt.compareSync(String(password), String(user.password))) {

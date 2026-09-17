@@ -105,6 +105,11 @@ function crud(base: string) {
       api<{ status: string; messages: string[] }>(`${base}/${id}`, { method: 'DELETE' }),
     selectlist: (search?: string, limit?: number) =>
       api<{ results: SelectOption[] }>(`${base}/selectlist${qs({ search, limit })}`),
+    reopen: (id: number | string, reason: string, status?: string) =>
+      api<{ status: string; messages: string[]; payload: Record<string, unknown> }>(`${base}/${id}/reopen`, {
+        method: 'POST',
+        json: { reason, status },
+      }),
   }
 }
 

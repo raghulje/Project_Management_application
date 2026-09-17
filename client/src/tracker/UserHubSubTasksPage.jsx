@@ -19,6 +19,7 @@ import {
   compareNumber,
 } from './components/TableColumnHeaders.jsx';
 import { useUserHubSession } from './lib/useUserHubSession.js';
+import { personMatches } from './lib/kfProjectDashboard.js';
 import {
   deleteSubtaskDraftRecords,
   fetchAssignedClosedProcessSubtasks,
@@ -48,6 +49,26 @@ const EMPTY_STATUS_COUNTS = {
 
 /** Stable default — `selectedMembers = []` would reset table page every render. */
 const EMPTY_SELECTED_MEMBERS = [];
+
+function isClosedLikeStatus(status) {
+  return /complete|closed|done|cancel/i.test(String(status || ''));
+}
+
+function subtaskMatchesLoggedInUser(user, row, mode = 'any') {
+  if (!user || !row) return false;
+  const assigned = personMatches(user, {
+    id: row.assignedToId || row.assigneeId,
+    email: row.assignedToEmail || row.assigneeEmail,
+    name: row.assignedTo || row.assignee,
+  });
+  const created = personMatches(user, {
+    name: row.createdBy,
+    email: row.createdByEmail,
+  });
+  if (mode === 'created') return created;
+  if (mode === 'assigned') return assigned;
+  return assigned || created;
+}
 
 const SUBTASK_TABLE_COLUMNS = [
   { key: 'subtaskName', label: 'Subtask', filter: 'subtaskName' },
@@ -188,37 +209,54 @@ export default function UserHubSubTasksPage({
 
   const loadProcessSubtasks = useCallback(async () => {
     if (myTeamMode) return;
-    if (!kfInstance?.api) return;
     setProcessSubtasksLoading(true);
     try {
-      await loadStatusCounts();
-
-      let result;
-      if (taskScope === 'created') {
-        result = await fetchMyCreatedSubtasksByStatus(kfInstance, createdStatusFilter, {
-          page: 1,
-          pageSize: HUB_SUBTASK_PAGE_SIZE,
-        });
-      } else if (assignedStatus === 'open') {
-        result = await fetchAssignedOpenProcessSubtasks(kfInstance, {
-          page: 1,
-          pageSize: HUB_SUBTASK_PAGE_SIZE,
-        });
-      } else {
-        result = await fetchAssignedClosedProcessSubtasks(kfInstance, {
-          page: 1,
-          pageSize: HUB_SUBTASK_PAGE_SIZE,
-        });
+      if (kfInstance?.api) {
+        await loadStatusCounts();
+        let result;
+        if (taskScope === 'created') {
+          result = await fetchMyCreatedSubtasksByStatus(kfInstance, createdStatusFilter, {
+            page: 1,
+            pageSize: HUB_SUBTASK_PAGE_SIZE,
+          });
+        } else if (assignedStatus === 'open') {
+          result = await fetchAssignedOpenProcessSubtasks(kfInstance, {
+            page: 1,
+            pageSize: HUB_SUBTASK_PAGE_SIZE,
+          });
+        } else {
+          result = await fetchAssignedClosedProcessSubtasks(kfInstance, {
+            page: 1,
+            pageSize: HUB_SUBTASK_PAGE_SIZE,
+          });
+        }
+        const { rows } = unwrapSubtaskPageResult(result);
+        if (Array.isArray(rows) && rows.length) {
+          const mine = rows.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, taskScope));
+          setProcessSubtasks(mine);
+          return;
+        }
       }
-      const { rows } = unwrapSubtaskPageResult(result);
-      setProcessSubtasks(rows);
+      const { fetchPmSubtasks } = await import('./pmApi.js');
+      const rows = await fetchPmSubtasks();
+      const allMine = (Array.isArray(rows) ? rows : []).filter((row) => subtaskMatchesLoggedInUser(scopeUser, row));
+      const scoped = allMine.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, taskScope));
+      const visible = taskScope === 'assigned'
+        ? scoped.filter((row) => (assignedStatus === 'closed' ? isClosedLikeStatus(row?.status) : !isClosedLikeStatus(row?.status)))
+        : scoped;
+      setProcessSubtasks(visible);
+      setSubtaskCounts({
+        created: allMine.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, 'created')).length,
+        assignedOpen: allMine.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, 'assigned') && !isClosedLikeStatus(row?.status)).length,
+        assignedClosed: allMine.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, 'assigned') && isClosedLikeStatus(row?.status)).length,
+      });
     } catch (e) {
       console.warn('UserHub subtasks: fetch failed', e?.message || e);
       setProcessSubtasks([]);
     } finally {
       setProcessSubtasksLoading(false);
     }
-  }, [myTeamMode, kfInstance, taskScope, createdStatusFilter, assignedStatus, loadStatusCounts]);
+  }, [myTeamMode, kfInstance, scopeUser, taskScope, createdStatusFilter, assignedStatus, loadStatusCounts]);
 
   useEffect(() => {
     if (myTeamMode) return;

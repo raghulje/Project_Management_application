@@ -3,8 +3,10 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
+import { resolveVisibility, subtaskRowVisible, visibilitySql } from '../services/recordVisibility.js'
 
 export const subtasksRouter = Router()
 
@@ -29,6 +31,10 @@ subtasksRouter.get('/', async (req, res) => {
     WHERE s.deleted_at IS NULL
   `
   const params: unknown[] = []
+  const vis = await resolveVisibility(req.user)
+  const clause = visibilitySql(vis, 'subtask', 's')
+  sql += clause.sql
+  params.push(...clause.params)
   if (req.query.task_id) { sql += ' AND s.task_id = ?'; params.push(Number(req.query.task_id)) }
   if (req.query.project_id) { sql += ' AND t.project_id = ?'; params.push(Number(req.query.project_id)) }
   if (req.query.status) { sql += ' AND s.status = ?'; params.push(String(req.query.status)) }
@@ -64,8 +70,10 @@ subtasksRouter.get('/:id', async (req, res) => {
         LIMIT 1
       `, [key])
   if (!row) return fail(res, 'Subtask not found', 404)
+  const vis = await resolveVisibility(req.user)
+  if (!vis.unrestricted && !subtaskRowVisible(vis, row)) return fail(res, 'Subtask not found', 404)
   const revisions = await listRevisions('subtask', Number(row.id))
-  const mapped = { ...mapRow(row), revisions, revision_count: revisions.length }
+  const mapped = { ...mapRow(row), revisions, revision_count: revisions.length, reopen_count: revisions.filter(isReopenRevision).length }
   return okItem(res, req.user ? await attachEditPolicy(req.user, 'subtask', mapped) : mapped)
 })
 
@@ -118,11 +126,29 @@ subtasksRouter.post('/', async (req, res) => {
   return okMessage(res, 'Subtask created', mapped, 201)
 })
 
+subtasksRouter.post('/:id/reopen', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!req.user) return fail(res, 'Unauthorized', 401)
+  const result = await reopenRecord({
+    itemType: 'subtask',
+    itemId: id,
+    reason: String(req.body?.reason || ''),
+    toStatus: req.body?.status ? String(req.body.status) : 'Open',
+    user: req.user,
+  })
+  if (!result.ok) return fail(res, result.message, result.status)
+  const mapped = { ...mapRow(result.row), reopen_count: result.reopen_count }
+  return okMessage(res, 'Subtask re-opened', req.user ? await attachEditPolicy(req.user, 'subtask', mapped) : mapped)
+})
+
 subtasksRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const existing = await get<Record<string, unknown>>(`SELECT * FROM subtasks WHERE id = ? AND deleted_at IS NULL`, [id])
   if (!existing) return fail(res, 'Subtask not found', 404)
   if (!req.user) return fail(res, 'Unauthorized', 401)
+  if (req.body?.status != null && isReopenAttempt(existing.status, req.body.status)) {
+    return fail(res, 'Closed records must be re-opened with a reason. Use Re-open.', 422)
+  }
   const filtered = await filterWritableUpdate({
     user: req.user,
     itemType: 'subtask',

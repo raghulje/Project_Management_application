@@ -4,6 +4,7 @@ import { fail, okItem, okMessage } from '../utils/response.js'
 import { buildPortfolio } from '../services/portfolio.js'
 import { ACTIVE_EMPLOYEE_SQL } from '../services/employeeStatus.js'
 import { syncKissflowPortfolio } from '../services/kissflowImport.js'
+import { filterPortfolioByVisibility, publicVisibility, resolveVisibility } from '../services/recordVisibility.js'
 
 export const dashboardRouter = Router()
 
@@ -72,8 +73,15 @@ dashboardRouter.get('/charts', async (_req, res) => {
   return okItem(res, { status, rag, category, taskStatus })
 })
 
-dashboardRouter.get('/portfolio', async (_req, res) => {
-  return okItem(res, await buildPortfolio())
+dashboardRouter.get('/visibility', async (req, res) => {
+  const scope = await resolveVisibility(req.user)
+  return okItem(res, publicVisibility(scope))
+})
+
+dashboardRouter.get('/portfolio', async (req, res) => {
+  const data = await buildPortfolio()
+  const scope = await resolveVisibility(req.user)
+  return okItem(res, filterPortfolioByVisibility(scope, data))
 })
 
 /** Same case/process endpoints as ProjectDashboardPage — production first, then development. */

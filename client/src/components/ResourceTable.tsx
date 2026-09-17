@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useDebounced } from '../lib/useDebounced'
-import { delayDays, fmt, OwnerAvatar, ProgressBar, Rag, ragTone, RevBadge, StatusPill } from '../pages/WorkspaceKit'
+import { delayDays, fmt, OwnerAvatar, ProgressBar, Rag, ragTone, ReopenBadge, RevBadge, StatusPill } from '../pages/WorkspaceKit'
 import { FrChips, FrHeader, FrPage, FrPager, FrPanel } from '../pages/FormReference'
 import { navState } from '../lib/recordNav'
 
@@ -9,7 +9,7 @@ type Col = {
   key: string
   label: string
   href?: (row: Record<string, unknown>) => string
-  kind?: 'status' | 'rag' | 'priority' | 'date' | 'revisions' | 'name' | 'person' | 'progress'
+  kind?: 'status' | 'rag' | 'priority' | 'date' | 'revisions' | 'reopen' | 'name' | 'person' | 'progress' | 'text'
   subKey?: string
 }
 
@@ -29,6 +29,15 @@ type Props = {
 }
 
 const PAGE_SIZE = 20
+const WRAP_KEYS = new Set(['name', 'project_name', 'task_name', 'subject', 'notes', 'detail', 'description', 'title'])
+
+function wrapCell(value: unknown) {
+  return (
+    <span className="fr-name-cell">
+      <span className="fr-name">{fmt(value)}</span>
+    </span>
+  )
+}
 
 function nameSub(c: Col, r: Record<string, unknown>) {
   const parts = [
@@ -99,11 +108,23 @@ export default function ResourceTable({
   }
 
   function cell(c: Col, r: Record<string, unknown>) {
-    const kind = c.kind || (c.key === 'status' ? 'status' : c.key === 'rag' ? 'rag' : c.key === 'priority' ? 'priority' : c.key === 'revision_count' ? 'revisions' : c.key === 'name' ? 'name' : /(_name$|assigned_to|owner)/.test(c.key) && c.key !== 'project_name' && c.key !== 'task_name' ? 'person' : /date/.test(c.key) ? 'date' : undefined)
+    const kind = c.kind || (
+      c.key === 'status' ? 'status'
+      : c.key === 'rag' ? 'rag'
+      : c.key === 'priority' ? 'priority'
+      : c.key === 'revision_count' ? 'revisions'
+      : c.key === 'reopen_count' ? 'reopen'
+      : c.key === 'name' ? 'name'
+      : WRAP_KEYS.has(c.key) ? 'text'
+      : /(_name$|assigned_to|owner)/.test(c.key) ? 'person'
+      : /date/.test(c.key) ? 'date'
+      : undefined
+    )
     const raw = r[c.key]
     if (kind === 'status' || kind === 'priority') return <StatusPill value={raw} />
     if (kind === 'rag') return <Rag value={raw} />
     if (kind === 'revisions') return <RevBadge count={raw} />
+    if (kind === 'reopen') return <ReopenBadge count={raw} />
     if (kind === 'person') return <OwnerAvatar name={raw} />
     if (kind === 'progress') return <ProgressBar value={raw} />
     if (kind === 'name') {
@@ -115,6 +136,7 @@ export default function ResourceTable({
         </span>
       )
     }
+    if (kind === 'text') return wrapCell(raw)
     if (kind === 'date') {
       const late = /end/.test(c.key) ? delayDays(r.status, raw) : 0
       return (

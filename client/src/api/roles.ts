@@ -13,10 +13,10 @@ export function normalizeRoles(user: { roles?: unknown; groups?: unknown; role?:
 export function primaryRole(user: { roles?: unknown; groups?: unknown; role?: unknown } | null | undefined, isAdmin = false) {
   const roles = normalizeRoles(user)
   if (roles.some((r) => r === 'Superusers' || r === 'Admin')) return roles.find((r) => r === 'Admin' || r === 'Superusers') || 'Admin'
-  const lead = roles.find((r) => (LEADERSHIP_ROLES as readonly string[]).includes(r))
-  if (lead) return lead
   const emp = roles.find((r) => (EMPLOYEE_ROLES as readonly string[]).includes(r))
   if (emp) return emp
+  const lead = roles.find((r) => (LEADERSHIP_ROLES as readonly string[]).includes(r))
+  if (lead) return lead
   if (isAdmin) return 'Admin'
   return roles[0] || 'Employee'
 }
@@ -26,8 +26,9 @@ export function isLeadershipRole(roles: string[]) {
 }
 
 export function isEmployeeRole(roles: string[], isAdmin = false, isLeadership = false) {
-  if (isAdmin || isLeadership) return false
+  if (isAdmin) return false
   if (roles.some((r) => (EMPLOYEE_ROLES as readonly string[]).includes(r))) return true
+  if (isLeadership) return false
   return roles.length === 0
 }
 

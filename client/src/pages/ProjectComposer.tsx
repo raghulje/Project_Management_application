@@ -15,6 +15,7 @@ import WsDate from './WsDate'
 import PersonPicker from './PersonPicker'
 import StatusTracker, { type StatusRevision } from './StatusTracker'
 import { defaultList, fromState, pageCrumbs, stateFor } from '../lib/recordNav'
+import { isClosedStatus, ReopenAction, ReopenBadge } from './WorkspaceKit'
 import { FrAcc, FrField, FrFoot, FrGrid, FrSheet, FrSheetBody, FrSheetHead, FrSheetMain, FrSection, FrUpload, FrYesNo } from './FormReference'
 
 const FLAGS: { key: string; label: string }[] = [
@@ -95,6 +96,7 @@ export default function ProjectComposer() {
   const [rail, setRail] = useState<'open' | 'min'>('open')
   const [createdAt, setCreatedAt] = useState('')
   const [revisions, setRevisions] = useState<StatusRevision[]>([])
+  const [reopenCount, setReopenCount] = useState(0)
 
   useEffect(() => {
     mastersApi.companies.list({ limit: 300 }).then((r) => {
@@ -150,6 +152,7 @@ export default function ProjectComposer() {
       })
       setCreatedAt(String(r.created_at || r.kissflow_created_at || ''))
       setRevisions((r.revisions as StatusRevision[]) || [])
+      setReopenCount(Number(r.reopen_count || 0))
     })
     activityApi.bundle('project', id).then((b) => {
       const next: Record<string, FlagFile> = {}
@@ -211,8 +214,10 @@ export default function ProjectComposer() {
   }
 
   const from = fromState(loc)
-  const back = id ? `/projects/${id}` : (from || defaultList('project', isEmployee))
-  const lock = (f: string) => fieldAccess(policy, f).locked
+  const list = defaultList('project', isEmployee)
+  const back = from || (id ? `/projects/${id}` : list)
+  const closed = isClosedStatus(form.status)
+  const lock = (f: string) => fieldAccess(policy, f).locked || (f === 'status' && closed)
   const mark = (f: string) => <AccessMark policy={policy} field={f} onRequest={req.ask} />
   const readOnly = !canSaveRecord(policy)
   const crumbs = pageCrumbs({
@@ -226,6 +231,20 @@ export default function ProjectComposer() {
   return (
     <FrSheet min={rail === 'min'}>
       <FrSheetHead title="Project" crumbs={crumbs} closeTo={back} closeState={stateFor(back, loc)}>
+        {reopenCount > 0 ? <ReopenBadge count={reopenCount} /> : null}
+        {id ? (
+          <ReopenAction
+            noun="project"
+            status={form.status}
+            onSubmit={async (reason) => {
+              await projectsApi.reopen(id, reason)
+              const r = await projectsApi.get(id)
+              set('status', String(r.status || 'Open'))
+              setRevisions((r.revisions as StatusRevision[]) || [])
+              setReopenCount(Number(r.reopen_count || 0))
+            }}
+          />
+        ) : null}
         {policy?.can_request ? (
           <button className="ws-btn ghost" type="button" onClick={() => req.ask([])}>
             <i className="ri-lock-unlock-line" />Request change

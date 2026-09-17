@@ -1,11 +1,13 @@
 let cache = null
+let cacheKey = null
 let inflight = null
 
 export async function fetchPmPortfolio() {
-  if (cache) return cache
-  if (inflight) return inflight
+  const token = localStorage.getItem('refex_pm_token') || ''
+  if (cache && cacheKey === token) return cache
+  if (inflight && cacheKey === token) return inflight
+  cacheKey = token
   inflight = (async () => {
-    const token = localStorage.getItem('refex_pm_token')
     const res = await fetch('/api/v1/dashboard/portfolio', {
       headers: {
         Accept: 'application/json',
@@ -29,6 +31,7 @@ export async function fetchPmPortfolio() {
 
 export function invalidatePmPortfolio() {
   cache = null
+  cacheKey = null
 }
 
 export async function syncPmFromKissflow() {

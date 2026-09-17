@@ -85,6 +85,8 @@ const LABELS: Record<string, string> = {
   access_request: 'Access request',
   access_grant: 'Access granted',
   access_deny: 'Access denied',
+  reopen_reason: 'Re-open reason',
+  reopen_count: 'Re-opened',
 }
 
 function labelOf(field: string) {
@@ -202,6 +204,10 @@ function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
   }
 }
 
+export function isReopenRevision(row: { changes?: RevisionChange[] }) {
+  return (row.changes || []).some((c) => c.field === 'reopen_reason')
+}
+
 export async function listRevisions(itemType: string, itemId: number): Promise<RevisionRow[]> {
   const rows = await all<Record<string, unknown>>(`
     SELECT id, item_type, item_id, revision_no, user_id, user_name, changes_json, created_at
@@ -244,12 +250,33 @@ export async function revisionCounts(itemType: string, ids: number[]) {
   return map
 }
 
+export async function reopenCounts(itemType: string, ids: number[]) {
+  const unique = [...new Set(ids.map(Number).filter((n) => n > 0))]
+  const map = new Map<number, number>()
+  if (!unique.length) return map
+  const placeholders = unique.map(() => '?').join(',')
+  const rows = await all<{ item_id: number; c: number }>(`
+    SELECT item_id, COUNT(*) as c
+    FROM record_revisions
+    WHERE item_type = ? AND item_id IN (${placeholders})
+      AND changes_json LIKE '%"field":"reopen_reason"%'
+    GROUP BY item_id
+  `, [itemType, ...unique])
+  for (const r of rows) map.set(Number(r.item_id), Number(r.c || 0))
+  return map
+}
+
 export async function attachRevisionCounts<T extends Record<string, unknown>>(
   itemType: string,
   rows: T[],
-): Promise<Array<T & { revision_count: number }>> {
-  const counts = await revisionCounts(itemType, rows.map((r) => Number(r.id)))
-  return rows.map((r) => ({ ...r, revision_count: counts.get(Number(r.id)) || 0 }))
+): Promise<Array<T & { revision_count: number; reopen_count: number }>> {
+  const ids = rows.map((r) => Number(r.id))
+  const [counts, reopens] = await Promise.all([revisionCounts(itemType, ids), reopenCounts(itemType, ids)])
+  return rows.map((r) => ({
+    ...r,
+    revision_count: counts.get(Number(r.id)) || 0,
+    reopen_count: reopens.get(Number(r.id)) || 0,
+  }))
 }
 
 export async function backfillTimelineRevisions() {

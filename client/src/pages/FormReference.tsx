@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { Crumb } from '../lib/recordNav'
+import { originLabel, type Crumb } from '../lib/recordNav'
 import { RecordTrail } from './WorkspaceKit'
 
 function withHome(crumbs: Crumb[]): Crumb[] {
@@ -8,6 +8,16 @@ function withHome(crumbs: Crumb[]): Crumb[] {
   if (!items.length) return items
   if (items.some((c) => c.to === '/' || c.label === 'Home')) return items
   return [{ to: '/', label: 'Home' }, ...items]
+}
+
+function BackLink({ to, state, label }: { to?: string; state?: unknown; label?: string }) {
+  if (!to) return null
+  return (
+    <Link className="ws-back" to={to} state={state}>
+      <i className="ri-arrow-left-line" />
+      {label || originLabel(to, 'Back')}
+    </Link>
+  )
 }
 
 export function FrPage({ children, fill }: { children: ReactNode; fill?: boolean }) {
@@ -35,6 +45,7 @@ export function FrSheetHead({
   return (
     <header className="fr-sheet-head">
       <div className="fr-sheet-head-left">
+        <BackLink to={closeTo} state={closeState} />
         <RecordTrail crumbs={trail} />
         <h1>{title}</h1>
       </div>
@@ -70,6 +81,9 @@ export function FrHeader({
   count,
   badge,
   crumbs,
+  backTo,
+  backLabel,
+  backState,
   children,
 }: {
   kicker?: string
@@ -79,6 +93,9 @@ export function FrHeader({
   count?: string
   badge?: ReactNode
   crumbs?: Crumb[]
+  backTo?: string
+  backLabel?: string
+  backState?: unknown
   children?: ReactNode
 }) {
   const trail = withHome(
@@ -91,6 +108,7 @@ export function FrHeader({
   return (
     <header className="fr-head">
       <div>
+        <BackLink to={backTo || kickerTo} state={backState || kickerState} label={backLabel} />
         <RecordTrail crumbs={trail} />
         <h1>{title}</h1>
         {badge ? <div className="fr-badge">{badge}</div> : null}
@@ -212,6 +230,24 @@ export function FrChips({
   )
 }
 
+export function FrKpi({
+  cards,
+}: {
+  cards: { label: string; value: string | number; tone?: string; icon?: string }[]
+}) {
+  return (
+    <div className="fr-kpi">
+      {cards.map((c) => (
+        <div key={c.label} className={`fr-kpi-card ${c.tone || ''}`}>
+          {c.icon ? <i className={c.icon} /> : null}
+          <b>{c.value}</b>
+          <span>{c.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function FrPager({
   page, pages, total, onPage, pageSize, unit = 'page',
 }: {
@@ -263,6 +299,8 @@ export function FrUpload({
   existingName,
   missing,
   disabled,
+  accept,
+  hint,
   onPick,
   onClear,
 }: {
@@ -270,6 +308,8 @@ export function FrUpload({
   existingName?: string
   missing?: boolean
   disabled?: boolean
+  accept?: string
+  hint?: string
   onPick: (file: File | null) => void
   onClear?: () => void
 }) {
@@ -288,10 +328,11 @@ export function FrUpload({
         <label>
           <i className="ri-upload-2-line" />
           <span>Upload document</span>
-          <em>PDF, Excel, Word, or image</em>
+          <em>{hint || 'PDF, Excel, Word, or image'}</em>
           <input
             type="file"
             hidden
+            accept={accept}
             disabled={disabled}
             onChange={(e) => onPick(e.target.files?.[0] || null)}
           />

@@ -240,6 +240,10 @@ employeesRouter.post('/', async (req, res) => {
   const info = await run(`INSERT INTO employees (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`, vals)
   const id = Number(info.insertId)
   await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'employee', itemId: id })
+  try {
+    const { provisionActiveEmployeeUsers } = await import('../services/provisionEmployeeUsers.js')
+    await provisionActiveEmployeeUsers()
+  } catch { /* user account is optional; employee row is saved */ }
   return okMessage(res, 'Employee created', await loadEmployee(id), 201)
 })
 
@@ -253,6 +257,10 @@ employeesRouter.put('/:id', async (req, res) => {
     ...fields.map((f) => b[f]), now(), id,
   ])
   await logAction({ userId: req.user?.id, actionType: 'update', itemType: 'employee', itemId: id })
+  try {
+    const { provisionActiveEmployeeUsers } = await import('../services/provisionEmployeeUsers.js')
+    await provisionActiveEmployeeUsers()
+  } catch { /* ignore */ }
   return okMessage(res, 'Employee updated', await loadEmployee(id))
 })
 

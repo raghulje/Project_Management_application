@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { NavState } from '../lib/recordNav'
 
@@ -87,11 +87,17 @@ export function Rag({ value }: { value: unknown }) {
 
 export function statusTone(status: unknown) {
   const s = String(status || '').toLowerCase()
-  if (s.includes('complete') || s.includes('closed') || s.includes('done')) return 'done'
+  if (s.includes('inactive') || s.includes('failed') || s.includes('denied') || s.includes('expired')) return 'hold'
+  if (s.includes('complete') || s.includes('closed') || s.includes('done') || s.includes('sent') || s.includes('granted')) return 'done'
   if (s.includes('hold') || s.includes('block') || s.includes('cancel')) return 'hold'
-  if (s.includes('progress') || s.includes('review') || s.includes('active')) return 'run'
+  if (s.includes('progress') || s.includes('review') || s.includes('active') || s.includes('pending')) return 'run'
   if (s.includes('open') || s.includes('todo') || s.includes('new')) return 'open'
   return ''
+}
+
+export function isClosedStatus(status: unknown) {
+  const s = String(status || '').toLowerCase()
+  return s.includes('closed') || s.includes('complete') || s.includes('cancel') || s === 'done'
 }
 
 export function StatusPill({ value }: { value: unknown }) {
@@ -176,27 +182,146 @@ export function RevBadge({ count }: { count: unknown }) {
   return <span className="ak-rev"><i className="ri-refresh-line" aria-hidden />{n}x</span>
 }
 
+export function ReopenBadge({ count }: { count: unknown }) {
+  const n = Number(count || 0)
+  if (!n) return <span className="ak-rev is-none">—</span>
+  return <span className="ak-rev is-reopen"><i className="ri-restart-line" aria-hidden />{n}x</span>
+}
+
+export function ReopenAction({
+  noun, status, onSubmit,
+}: {
+  noun: string
+  status: unknown
+  onSubmit: (reason: string) => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (!isClosedStatus(status)) return null
+  return (
+    <>
+      <button className="ws-btn" type="button" onClick={() => { setErr(''); setOpen(true) }}>
+        <i className="ri-restart-line" />Re-open
+      </button>
+      <ReopenDialog
+        open={open}
+        noun={noun}
+        busy={busy}
+        error={err}
+        onClose={() => setOpen(false)}
+        onSubmit={async (reason) => {
+          setBusy(true)
+          setErr('')
+          try {
+            await onSubmit(reason)
+            setOpen(false)
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Could not re-open')
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
+    </>
+  )
+}
+
+export function ReopenDialog({
+  open, noun, busy, error, onClose, onSubmit,
+}: {
+  open: boolean
+  noun: string
+  busy?: boolean
+  error?: string
+  onClose: () => void
+  onSubmit: (reason: string) => Promise<void> | void
+}) {
+  const [reason, setReason] = useState('')
+  const [miss, setMiss] = useState(false)
+  useEffect(() => {
+    if (!open) {
+      setReason('')
+      setMiss(false)
+    }
+  }, [open])
+  if (!open) return null
+  async function send() {
+    const text = reason.trim()
+    if (!text) {
+      setMiss(true)
+      return
+    }
+    await onSubmit(text)
+  }
+  return (
+    <div className="fa-modal-back" onClick={onClose}>
+      <div className="fa-modal" role="dialog" aria-labelledby="reopen-title" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h2 id="reopen-title">Re-open {noun}</h2>
+          <p>A reason is required and is stored in the audit log. This record can be re-opened more than once.</p>
+        </header>
+        <label className={`fa-reason${miss ? ' is-miss' : ''}`}>
+          <span>Reason for re-open *</span>
+          <textarea
+            rows={4}
+            value={reason}
+            placeholder="Why is this being re-opened?"
+            onChange={(e) => { setReason(e.target.value); if (e.target.value.trim()) setMiss(false) }}
+          />
+        </label>
+        {miss ? <div className="pc-alert">Reason is required</div> : null}
+        {error ? <div className="pc-alert">{error}</div> : null}
+        <footer>
+          <button className="ws-btn ghost" type="button" disabled={busy} onClick={onClose}>Cancel</button>
+          <button className="ws-btn" type="button" disabled={busy} onClick={() => void send()}>{busy ? 'Saving...' : 'Submit'}</button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 export function RevisionLog({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) {
-    return <div className="ws-empty">No revisions yet. Opening a record does not count. Changes after save appear here.</div>
+    return <div className="ws-empty">No audit entries yet. Saved field changes and re-opens appear here.</div>
   }
   return (
     <div className="ws-audit">
       {rows.map((r) => {
-        const changes = Array.isArray(r.changes) ? r.changes as Array<{ label?: string; from?: string; to?: string }> : []
+        const changes = Array.isArray(r.changes) ? r.changes as Array<{ field?: string; label?: string; from?: string; to?: string }> : []
+        const reopen = changes.find((c) => c.field === 'reopen_reason')
+        const reopenNo = changes.find((c) => c.field === 'reopen_count')?.to || ''
         const n = changes.length
         return (
-          <article key={String(r.id || r.revision_no)} className="ws-audit-card">
+          <article key={String(r.id || r.revision_no)} className={`ws-audit-card${reopen ? ' is-reopen' : ''}`}>
             <header className="ws-audit-head">
-              <span className="ws-audit-no">#{String(r.revision_no)}</span>
+              <span className="ws-audit-no">{reopen ? (reopenNo || 'R') : `#${String(r.revision_no)}`}</span>
               <div className="ws-audit-who">
-                <b>Updated by {fmt(r.user_name)}</b>
+                <b>{reopen ? 'Re-opened by' : 'Updated by'} {fmt(r.user_name)}</b>
                 <span>{fmtWhen(r.created_at)}</span>
               </div>
-              <em>{n} {n === 1 ? 'change' : 'changes'}</em>
+              <em>{reopen ? 'Re-open' : `${n} ${n === 1 ? 'change' : 'changes'}`}</em>
             </header>
             <div className="ws-audit-body">
-              {changes.length ? changes.map((c, i) => (
+              {reopen ? (
+                <div className="ws-audit-change">
+                  <p>Re-open reason</p>
+                  <div className="ws-audit-reason">{reopen.to || '—'}</div>
+                  {changes.filter((c) => c.field === 'status').map((c) => (
+                    <div key="status" className="ws-audit-vals" style={{ marginTop: 10 }}>
+                      <div>
+                        <small>Previous</small>
+                        <span className="from">{c.from || '—'}</span>
+                      </div>
+                      <i className="ri-arrow-right-line" />
+                      <div>
+                        <small>Updated</small>
+                        <span className="to">{c.to || '—'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : changes.length ? changes.map((c, i) => (
                 <div key={`${c.label}-${i}`} className="ws-audit-change">
                   <p>{c.label || 'Field'}</p>
                   <div className="ws-audit-vals">

@@ -72,11 +72,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     homePath,
     can: (permission) => isAdmin || isTruthy(permissions[permission]),
     login: async (email, password) => {
+      const { invalidatePmPortfolio } = await import('../tracker/pmApi.js')
+      invalidatePmPortfolio()
       const res = await authApi.login(email, password)
       setToken(res.token)
       setUser((res.user || (await authApi.me())) as User)
     },
     logout: () => {
+      void import('../tracker/pmApi.js').then((m) => m.invalidatePmPortfolio())
       setToken(null)
       setUser(null)
     },

@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { groupsApi, usersApi } from '../api/client'
 import { useDebounced } from '../lib/useDebounced'
-import { initials } from './WorkspaceKit'
+import { OwnerAvatar, StatusPill } from './WorkspaceKit'
 import { Alert } from './AdminKit'
 import WsSelect from './WsSelect'
-import { FrAcc, FrChips, FrField, FrGrid, FrHeader, FrPage, FrPanel, FrSection } from './FormReference'
+import { FrAcc, FrChips, FrField, FrGrid, FrHeader, FrPage, FrPager, FrPanel, FrSection } from './FormReference'
 
 const EMPTY = { first_name: '', last_name: '', username: '', email: '', password: '', role_id: '' }
+const PAGE_SIZE = 20
 
 export function UsersList() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
@@ -15,6 +16,7 @@ export function UsersList() {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [page, setPage] = useState(1)
   const q = useDebounced(search)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -36,6 +38,13 @@ export function UsersList() {
     : statusFilter === 'Inactive'
       ? rows.filter((r) => !r.activated)
       : rows
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE))
+  const safePage = Math.min(page, pages)
+  const pageRows = useMemo(
+    () => shown.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [shown, safePage],
+  )
+  useEffect(() => { setPage(1) }, [statusFilter, q])
 
   async function create() {
     if (!form.first_name.trim() || !form.username.trim()) {
@@ -62,7 +71,11 @@ export function UsersList() {
 
   return (
     <FrPage>
-      <FrHeader title="App users" count={`${rows.length} total records`}>
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { label: 'App users' }]}
+        title="App users"
+        count={`${rows.length} total records`}
+      >
         <input className="fr-search" placeholder="Search records..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <button className="ws-btn" type="button" onClick={() => { setOpen(true); setErr('') }}>
           <i className="ri-user-add-line" />Create
@@ -85,7 +98,7 @@ export function UsersList() {
           <FrSection label="Create user">
             <div className="fr-sec-tools">
               <button className="ws-btn ghost" type="button" onClick={() => setOpen(false)}>Discard</button>
-              <button className="ws-btn" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Saving…' : 'Submit'}</button>
+              <button className="ws-btn" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Saving...' : 'Submit'}</button>
             </div>
             <FrGrid>
               <FrField label="First name" required>
@@ -129,14 +142,17 @@ export function UsersList() {
               </tr>
             </thead>
             <tbody>
-              {shown.length === 0 ? (
+              {pageRows.length === 0 ? (
                 <tr><td colSpan={5} className="fr-empty">No records found</td></tr>
-              ) : shown.map((r) => (
+              ) : pageRows.map((r) => (
                 <tr key={String(r.id)}>
                   <td>
-                    <span className="emp-name">
-                      <span className="ws-ava">{initials(r.name)}</span>
-                      {String(r.name || '—')}
+                    <span className="fr-owner-row">
+                      <OwnerAvatar name={r.name} />
+                      <span className="fr-name-cell">
+                        <span className="fr-name">{String(r.name || '—')}</span>
+                        <span className="fr-sub">{String(r.username || '')}</span>
+                      </span>
                     </span>
                   </td>
                   <td>{String(r.email || '—')}</td>
@@ -156,12 +172,13 @@ export function UsersList() {
                       }}
                     />
                   </td>
-                  <td><span className={`ws-pri ${r.activated ? 'done' : 'hold'}`}>{r.activated ? 'Active' : 'Inactive'}</span></td>
+                  <td><StatusPill value={r.activated ? 'Active' : 'Inactive'} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <FrPager page={safePage} pages={pages} total={shown.length} pageSize={PAGE_SIZE} onPage={setPage} />
       </FrPanel>
     </FrPage>
   )

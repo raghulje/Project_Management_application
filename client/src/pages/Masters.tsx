@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { mastersApi } from '../api/client'
 import { useDebounced } from '../lib/useDebounced'
 import { Alert } from './AdminKit'
-import { FrAcc, FrField, FrGrid, FrHeader, FrPage, FrPanel, FrSection } from './FormReference'
+import { FrAcc, FrField, FrGrid, FrHeader, FrPage, FrPager, FrPanel, FrSection } from './FormReference'
 
 type Row = Record<string, unknown>
 type Field = { key: string; label: string; placeholder?: string }
 type Crud = typeof mastersApi.companies
+const PAGE_SIZE = 20
 
 function MasterModule({
   title, noun, api, fields,
@@ -28,6 +29,7 @@ function MasterModule({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [page, setPage] = useState(1)
 
   async function load() {
     const r = await api.list({ search: q || undefined, limit: 400 })
@@ -36,6 +38,13 @@ function MasterModule({
   useEffect(() => { void load().catch((e) => setErr(e instanceof Error ? e.message : 'Failed to load')) }, [q])
 
   const filtered = rows
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, pages)
+  const pageRows = useMemo(
+    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filtered, safePage],
+  )
+  useEffect(() => { setPage(1) }, [q])
 
   function startCreate() {
     setEditId('')
@@ -78,8 +87,12 @@ function MasterModule({
 
   return (
     <FrPage>
-      <FrHeader title={title} count={`${filtered.length} total records`}>
-        <input className="fr-search" placeholder={`Search records...`} value={search} onChange={(e) => setSearch(e.target.value)} />
+      <FrHeader
+        crumbs={[{ to: '/admin', label: 'Admin' }, { label: title }]}
+        title={title}
+        count={`${filtered.length} total records`}
+      >
+        <input className="fr-search" placeholder="Search records..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <button className="ws-btn" type="button" onClick={startCreate}><i className="ri-add-line" />Create</button>
       </FrHeader>
       {err ? <Alert kind="err">{err}</Alert> : null}
@@ -90,7 +103,7 @@ function MasterModule({
           <FrSection label={editId ? `Edit ${noun}` : `New ${noun}`}>
             <div className="fr-sec-tools">
               <button className="ws-btn ghost" type="button" onClick={() => setOpen(false)}>Discard</button>
-              <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : editId ? 'Save changes' : 'Submit'}</button>
+              <button className="ws-btn" type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Saving...' : editId ? 'Save changes' : 'Submit'}</button>
             </div>
             <FrGrid>
               {fields.map((f) => (
@@ -117,20 +130,32 @@ function MasterModule({
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {pageRows.length === 0 ? (
                 <tr><td colSpan={fields.length + 1} className="fr-empty">No records found</td></tr>
-              ) : filtered.map((r) => (
+              ) : pageRows.map((r) => (
                 <tr key={String(r.id)}>
-                  {fields.map((f) => <td key={f.key}>{String(r[f.key] || '—')}</td>)}
-                  <td className="ak-acts">
-                    <button className="emp-act edit" type="button" title="Edit" onClick={() => startEdit(r)}><i className="ri-pencil-line" /></button>
-                    <button className="emp-act danger" type="button" title="Delete" onClick={() => void remove(String(r.id))}><i className="ri-delete-bin-line" /></button>
+                  {fields.map((f, i) => (
+                    <td key={f.key}>
+                      {i === 0 || f.key === 'notes' || f.key === 'address' ? (
+                        <span className="fr-name-cell">
+                          <span className="fr-name">{String(r[f.key] || '—')}</span>
+                          {i === 0 && f.key !== 'code' && r.code ? <span className="fr-sub">{String(r.code)}</span> : null}
+                        </span>
+                      ) : String(r[f.key] || '—')}
+                    </td>
+                  ))}
+                  <td>
+                    <span className="ak-acts">
+                      <button className="fr-icon-btn" type="button" title="Edit" onClick={() => startEdit(r)}><i className="ri-pencil-line" /></button>
+                      <button className="fr-icon-btn danger" type="button" title="Delete" onClick={() => void remove(String(r.id))}><i className="ri-delete-bin-line" /></button>
+                    </span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <FrPager page={safePage} pages={pages} total={filtered.length} pageSize={PAGE_SIZE} onPage={setPage} />
       </FrPanel>
     </FrPage>
   )

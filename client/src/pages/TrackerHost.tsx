@@ -30,7 +30,9 @@ const SUBTASK_POPUPS = new Set([
 ])
 
 function localPopupPath(popupId: string, params: Record<string, unknown> = {}) {
-  const instance = String(params.InstanceID || params.CaseID || params.id || params.Board_ID || '').trim()
+  const instance = String(
+    params.dbId || params.InstanceID || params.CaseID || params.id || params.Board_ID || '',
+  ).trim()
   if (PROJECT_POPUPS.has(popupId)) return instance ? `/projects/${encodeURIComponent(instance)}` : '/projects/new'
   if (TASK_POPUPS.has(popupId)) return instance ? `/tasks/${encodeURIComponent(instance)}` : '/tasks/new'
   if (SUBTASK_POPUPS.has(popupId)) return instance ? `/subtasks/${encodeURIComponent(instance)}` : '/subtasks/new'
@@ -42,8 +44,9 @@ export default function TrackerHost({ children }: { children: ReactNode }) {
   const nav = useNavigate()
   const loc = useLocation()
   useEffect(() => {
-    window.__pmNavigate = (path: string) => {
-      nav(path, { state: navState(loc) })
+    window.__pmNavigate = (path: string, extra?: { from?: string }) => {
+      const state = navState(loc)
+      nav(path, { state: extra?.from ? { ...state, from: extra.from } : state })
     }
     return () => { delete window.__pmNavigate }
   }, [nav, loc])
@@ -71,6 +74,7 @@ export default function TrackerHost({ children }: { children: ReactNode }) {
       showInfo: (msg: string) => {
         const text = String(msg || '').trim()
         if (!text || /kissflow sdk/i.test(text) || /open this page inside kissflow/i.test(text)) return
+        if (/missing instanceid or activityid/i.test(text) || /missing caseid/i.test(text)) return
         window.alert(text)
       },
       openPopup,

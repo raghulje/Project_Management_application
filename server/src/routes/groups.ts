@@ -62,7 +62,8 @@ groupsRouter.get('/:id', canReadRoles, async (req, res) => {
   const row = await get<Record<string, unknown>>(`SELECT * FROM permission_groups WHERE id = ?`, [id])
   if (!row) return fail(res, 'Role not found', 404)
   const members = await all(`
-    SELECT u.id, u.email, u.first_name, u.last_name, u.username
+    SELECT u.id, u.email, u.first_name, u.last_name, u.username,
+      TRIM(CONCAT(IFNULL(u.first_name, ''), ' ', IFNULL(u.last_name, ''))) as name
     FROM users u
     INNER JOIN users_groups ug ON ug.user_id = u.id
     WHERE ug.group_id = ? AND u.deleted_at IS NULL

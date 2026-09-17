@@ -28,7 +28,6 @@ export default function UserHubProjectsPage({ useLayout = false }) {
           useLayout={useLayout}
           scopeToCurrentUser
           scopeUser={scopeUser}
-          projectsScopeOwnerOnly
           contentView="projects"
           hideUserScopeToggle
           hideWelcomeHeader
