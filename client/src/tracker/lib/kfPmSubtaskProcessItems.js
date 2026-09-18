@@ -153,7 +153,15 @@ export async function fetchMyCreatedSubtasksByStatus(
 ) {
   try {
     const { fetchPmSubtasks } = await import('../pmApi.js');
-    const rows = await fetchPmSubtasks();
+    const all = await fetchPmSubtasks();
+    const needle = String(statusLabel || '').toLowerCase();
+    const rows = needle
+      ? all.filter((r) => {
+          const status = String(r.status || '').toLowerCase();
+          if (needle === 'in progress') return status.includes('progress');
+          return status.includes(needle);
+        })
+      : all;
     return { rows, total: rows.length, page, pageSize };
   } catch { /* fall through */ }
   const paths = buildSubtaskProcessPaths(kfInstance);
@@ -229,6 +237,12 @@ export async function fetchAssignedOpenProcessSubtasks(
   kfInstance,
   { page = 1, pageSize = HUB_SUBTASK_PAGE_SIZE, activities: preloaded } = {},
 ) {
+  try {
+    const { fetchPmSubtasks } = await import('../pmApi.js');
+    const all = await fetchPmSubtasks();
+    const rows = all.filter((r) => !/complete|closed|done|cancel/i.test(String(r.status || '')));
+    return { rows, total: rows.length, page, pageSize };
+  } catch { /* fall through */ }
   const paths = buildSubtaskProcessPaths(kfInstance);
   if (!paths) return { rows: [], total: 0, page, pageSize };
 
@@ -271,6 +285,12 @@ export async function fetchAssignedClosedProcessSubtasks(
   kfInstance,
   { page = 1, pageSize = HUB_SUBTASK_PAGE_SIZE, activities: preloaded } = {},
 ) {
+  try {
+    const { fetchPmSubtasks } = await import('../pmApi.js');
+    const all = await fetchPmSubtasks();
+    const rows = all.filter((r) => /complete|closed|done/i.test(String(r.status || '')));
+    return { rows, total: rows.length, page, pageSize };
+  } catch { /* fall through */ }
   const paths = buildSubtaskProcessPaths(kfInstance);
   if (!paths) return { rows: [], total: 0, page, pageSize };
 

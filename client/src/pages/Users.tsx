@@ -130,7 +130,7 @@ export function UsersList() {
       ) : null}
 
       <FrPanel>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table">
             <thead>
               <tr>
@@ -146,7 +146,7 @@ export function UsersList() {
                 <tr><td colSpan={5} className="fr-empty">No records found</td></tr>
               ) : pageRows.map((r) => (
                 <tr key={String(r.id)}>
-                  <td>
+                  <td data-label="Name">
                     <span className="fr-owner-row">
                       <OwnerAvatar name={r.name} />
                       <span className="fr-name-cell">
@@ -155,9 +155,9 @@ export function UsersList() {
                       </span>
                     </span>
                   </td>
-                  <td>{String(r.email || '—')}</td>
-                  <td>{String(r.username || '—')}</td>
-                  <td>
+                  <td data-label="Email">{String(r.email || '—')}</td>
+                  <td data-label="Username">{String(r.username || '—')}</td>
+                  <td data-label="Role">
                     <WsSelect
                       size="sm"
                       value=""
@@ -172,7 +172,7 @@ export function UsersList() {
                       }}
                     />
                   </td>
-                  <td><StatusPill value={r.activated ? 'Active' : 'Inactive'} /></td>
+                  <td data-label="Status"><StatusPill value={r.activated ? 'Active' : 'Inactive'} /></td>
                 </tr>
               ))}
             </tbody>

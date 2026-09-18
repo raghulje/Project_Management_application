@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authRequired } from './middleware/auth.js'
+import { attachAuditContext, auditUserActivity } from './middleware/activityAudit.js'
 import { fail } from './utils/response.js'
 import authRouter from './routes/auth.js'
 import { usersRouter } from './routes/users.js'
@@ -78,14 +79,16 @@ export function createApp() {
       product: 'Refex Project Management',
       version: '1.0.0',
       serve_client: process.env.SERVE_CLIENT === 'true',
-      features: ['projects', 'tasks', 'subtasks', 'hrms-sync', 'admin-rbac', 'kissflow-import'],
+      features: ['projects', 'tasks', 'subtasks', 'hrms-sync', 'admin-rbac', 'record-import', 'bulk-actions', 'audit-log'],
     })
   })
 
+  app.use('/api/v1', attachAuditContext)
   app.use('/api/v1', authRouter)
 
   const api = express.Router()
   api.use(authRequired)
+  api.use(auditUserActivity)
 
   api.use('/groups', groupsRouter)
   api.use('/users', moduleGate('people'), usersRouter)

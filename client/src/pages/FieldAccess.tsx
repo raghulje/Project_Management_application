@@ -254,7 +254,7 @@ export function ApprovalsPage() {
         </div>
       ) : null}
       <FrPanel>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table">
             <thead>
               <tr>
@@ -274,25 +274,25 @@ export function ApprovalsPage() {
                 </tr>
               ) : rows.map((r) => (
                 <tr key={r.id}>
-                  <td>
+                  <td data-label="Record">
                     <span className="fr-name-cell">
                       <Link className="fr-name" to={r.record_path}>{r.item_name || `${r.item_type} #${r.item_id}`}</Link>
                       <span className="fr-sub">{r.reason || 'Locked fields'}</span>
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Fields">
                     <span className="fr-name-cell">
                       <span className="fr-name">{r.field_labels.join(', ') || '—'}</span>
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Requested by">
                     <span className="fr-name-cell">
                       <span className="fr-name">{r.requested_by_name}</span>
                       <span className="fr-sub">{r.created_at?.slice(0, 16).replace('T', ' ')}</span>
                     </span>
                   </td>
-                  <td><StatusPill value={r.status} /></td>
-                  <td>
+                  <td data-label="Status"><StatusPill value={r.status} /></td>
+                  <td data-label="Actions">
                     <span className="ak-acts">
                       <Link className="ws-btn ghost" to={r.record_path}>Open</Link>
                       {tab === 'inbox' && r.status === 'pending' ? (

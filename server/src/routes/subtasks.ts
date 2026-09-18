@@ -3,15 +3,19 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordCreated, recordDeleted, recordRevision } from '../services/revisions.js'
+import { lifecycleFields, mergeWrite, prepareCreateBody, stampCreateWrite } from '../services/recordIdentity.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { applyCreateDefaults } from '../services/employeeProfile.js'
 import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
 import { resolveVisibility, subtaskRowVisible, visibilitySql } from '../services/recordVisibility.js'
+import { attachRecordImport } from './recordImport.js'
+import { attachRecordBulk } from './recordBulk.js'
 
 export const subtasksRouter = Router()
 
 const WRITE = [
-  'kissflow_id', 'task_id', 'name', 'summary', 'status', 'workflow_status', 'priority',
+  'subtask_code', 'task_id', 'name', 'summary', 'status', 'workflow_status', 'priority',
   'start_date', 'end_date', 'is_dependent',
   'assigned_to_employee_id', 'assigned_to_name',
   'l1_manager_email', 'l2_manager_email', 'created_by_name',
@@ -39,9 +43,9 @@ subtasksRouter.get('/', async (req, res) => {
   if (req.query.project_id) { sql += ' AND t.project_id = ?'; params.push(Number(req.query.project_id)) }
   if (req.query.status) { sql += ' AND s.status = ?'; params.push(String(req.query.status)) }
   if (q) {
-    sql += ` AND (s.name LIKE ? OR s.summary LIKE ? OR t.name LIKE ?)`
+    sql += ` AND (s.name LIKE ? OR s.subtask_code LIKE ? OR s.summary LIKE ? OR t.name LIKE ?)`
     const like = `%${q}%`
-    params.push(like, like, like)
+    params.push(like, like, like, like)
   }
   sql += ' ORDER BY s.id DESC'
   const limit = Math.min(Number(req.query.limit) || 50, 500)
@@ -50,6 +54,9 @@ subtasksRouter.get('/', async (req, res) => {
   const rows = await all<Record<string, unknown>>(`${sql} ${limitSql(limit, offset)}`, params)
   return okList(res, await attachRevisionCounts('subtask', rows.map(mapRow)), Number(totalRow?.c || 0))
 })
+
+attachRecordImport(subtasksRouter, 'subtask')
+attachRecordBulk(subtasksRouter, 'subtask')
 
 subtasksRouter.get('/:id', async (req, res) => {
   const key = String(req.params.id || '').trim()
@@ -66,9 +73,9 @@ subtasksRouter.get('/:id', async (req, res) => {
         FROM subtasks s
         LEFT JOIN tasks t ON t.id = s.task_id
         LEFT JOIN projects p ON p.id = t.project_id
-        WHERE s.deleted_at IS NULL AND s.kissflow_id = ?
+        WHERE s.deleted_at IS NULL AND (s.subtask_code = ? OR s.kissflow_id = ?)
         LIMIT 1
-      `, [key])
+      `, [key, key])
   if (!row) return fail(res, 'Subtask not found', 404)
   const vis = await resolveVisibility(req.user)
   if (!vis.unrestricted && !subtaskRowVisible(vis, row)) return fail(res, 'Subtask not found', 404)
@@ -87,20 +94,23 @@ function writeVals(body: Record<string, unknown>) {
 }
 
 subtasksRouter.post('/', async (req, res) => {
-  const b = req.body || {}
+  const b = await applyCreateDefaults('subtask', req.body || {}, req.user)
   if (!b.name) return fail(res, 'name is required')
   const meta = await resolveAssignmentMeta('subtask', b)
-  const { fields, vals } = writeVals({ ...b, ...meta.extra })
-  if (!fields.includes('name')) { fields.push('name'); vals.push(b.name) }
+  const prepared = await prepareCreateBody('subtask', { ...b, ...meta.extra }, 'local')
+  const { fields, vals } = writeVals(prepared)
+  if (!fields.includes('name')) { fields.push('name'); vals.push(prepared.name) }
   const ts = now()
+  stampCreateWrite(fields, vals, prepared, req.user?.id ?? null, ts)
   const cols = [...fields, 'created_by_user_id', 'created_at', 'updated_at']
   const info = await run(
     `INSERT INTO subtasks (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
     [...vals, req.user?.id ?? null, ts, ts],
   )
   const id = Number(info.insertId)
-  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'subtask', itemId: id })
   const row = await get<Record<string, unknown>>(`SELECT * FROM subtasks WHERE id = ?`, [id])
+  await recordCreated({ itemType: 'subtask', itemId: id, user: req.user, row: row || prepared })
+  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'subtask', itemId: id })
   const mapped = mapRow(row || {})
   void resolvePersonEmail(val(mapped, 'assigned_to_name'), mapped.assigned_to_employee_id as number | null).then((email) => {
     notifyWorkflow({
@@ -160,11 +170,14 @@ subtasksRouter.put('/:id', async (req, res) => {
   if (filtered.unchanged) {
     return okMessage(res, 'No changes', req.user ? await attachEditPolicy(req.user, 'subtask', mapRow(existing)) : mapRow(existing))
   }
+  const ts = now()
   const { fields, vals } = writeVals(filtered.body)
+  const life = lifecycleFields(existing, filtered.body.status, req.user.id, ts)
+  for (let i = 0; i < life.fields.length; i += 1) mergeWrite(fields, vals, life.fields[i], life.vals[i])
   if (!fields.length) return fail(res, 'No fields')
   await run(
     `UPDATE subtasks SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-    [...vals, now(), id],
+    [...vals, ts, id],
   )
   const after = await get<Record<string, unknown>>(`SELECT * FROM subtasks WHERE id = ?`, [id])
   const changes = diffRecords(existing, after || {})
@@ -198,7 +211,9 @@ subtasksRouter.delete('/:id', async (req, res) => {
     return fail(res, 'Subtask not found', 404)
   }
   const ts = now()
-  await run(`UPDATE subtasks SET deleted_at = ?, updated_at = ? WHERE id = ?`, [ts, ts, id])
+  const existingRow = await get<Record<string, unknown>>(`SELECT * FROM subtasks WHERE id = ?`, [id])
+  await run(`UPDATE subtasks SET deleted_at = ?, deleted_by_user_id = ?, updated_by_user_id = ?, updated_at = ? WHERE id = ?`, [ts, req.user?.id ?? null, req.user?.id ?? null, ts, id])
+  await recordDeleted({ itemType: 'subtask', itemId: id, user: req.user, row: existingRow })
   await logAction({ userId: req.user?.id, actionType: 'delete', itemType: 'subtask', itemId: id })
   return okMessage(res, 'Subtask deleted')
 })

@@ -3,15 +3,19 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordCreated, recordDeleted, recordRevision } from '../services/revisions.js'
+import { lifecycleFields, mergeWrite, prepareCreateBody, stampCreateWrite } from '../services/recordIdentity.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { applyCreateDefaults } from '../services/employeeProfile.js'
 import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
 import { projectRowVisible, resolveVisibility, taskRowVisible, visibilitySql } from '../services/recordVisibility.js'
+import { attachRecordImport } from './recordImport.js'
+import { attachRecordBulk } from './recordBulk.js'
 
 export const projectsRouter = Router()
 
 const WRITE = [
-  'kissflow_id', 'project_code', 'name', 'status', 'priority', 'rag', 'risk',
+  'project_code', 'name', 'status', 'priority', 'rag', 'risk',
   'category', 'project_type', 'project_request', 'function_type',
   'function_category', 'function_sub_category',
   'company_name', 'entity', 'business', 'company_id',
@@ -77,12 +81,15 @@ projectsRouter.get('/selectlist', async (req, res) => {
   const q = String(req.query.search || '').trim()
   const vis = await resolveVisibility(req.user)
   const clause = visibilitySql(vis, 'project')
-  let sql = `SELECT id, CONCAT(COALESCE(kissflow_id,''), ' — ', name) as text FROM projects WHERE deleted_at IS NULL${clause.sql}`
+  let sql = `SELECT id, CONCAT(COALESCE(NULLIF(project_code,''), CONCAT('#', id)), ' — ', name) as text FROM projects WHERE deleted_at IS NULL${clause.sql}`
   const params: unknown[] = [...clause.params]
-  if (q) { sql += ' AND (name LIKE ? OR kissflow_id LIKE ? OR project_code LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`) }
+  if (q) { sql += ' AND (name LIKE ? OR project_code LIKE ? OR kissflow_id LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`) }
   sql += ' ORDER BY name ASC LIMIT 500'
   return res.json({ results: await all(sql, params), pagination: { more: false } })
 })
+
+attachRecordImport(projectsRouter, 'project')
+attachRecordBulk(projectsRouter, 'project')
 
 projectsRouter.get('/:id', async (req, res) => {
   const key = String(req.params.id || '').trim()
@@ -155,20 +162,23 @@ function writeVals(body: Record<string, unknown>) {
 }
 
 projectsRouter.post('/', async (req, res) => {
-  const b = req.body || {}
+  const b = await applyCreateDefaults('project', req.body || {}, req.user)
   if (!b.name) return fail(res, 'name is required')
   const meta = await resolveAssignmentMeta('project', b)
-  const { fields, vals } = writeVals({ ...b, ...meta.extra })
-  if (!fields.includes('name')) { fields.push('name'); vals.push(b.name) }
+  const prepared = await prepareCreateBody('project', { ...b, ...meta.extra }, 'local')
+  const { fields, vals } = writeVals(prepared)
+  if (!fields.includes('name')) { fields.push('name'); vals.push(prepared.name) }
   const ts = now()
+  stampCreateWrite(fields, vals, prepared, req.user?.id ?? null, ts)
   const cols = [...fields, 'created_by_user_id', 'created_at', 'updated_at']
   const info = await run(
     `INSERT INTO projects (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
     [...vals, req.user?.id ?? null, ts, ts],
   )
   const id = Number(info.insertId)
-  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'project', itemId: id })
   const row = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ?`, [id])
+  await recordCreated({ itemType: 'project', itemId: id, user: req.user, row: row || prepared })
+  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'project', itemId: id })
   const mapped = mapProject(row || {})
   void resolvePersonEmail(val(mapped, 'project_owner_name'), mapped.project_owner_employee_id as number | null).then((email) => {
     notifyWorkflow({
@@ -231,11 +241,14 @@ projectsRouter.put('/:id', async (req, res) => {
     const mapped = mapProject(existing)
     return okMessage(res, 'No changes', req.user ? await attachEditPolicy(req.user, 'project', mapped) : mapped)
   }
+  const ts = now()
   const { fields, vals } = writeVals(filtered.body)
+  const life = lifecycleFields(existing, filtered.body.status, req.user.id, ts)
+  for (let i = 0; i < life.fields.length; i += 1) mergeWrite(fields, vals, life.fields[i], life.vals[i])
   if (!fields.length) return fail(res, 'No fields')
   await run(
-    `UPDATE projects SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_by_user_id = ?, updated_at = ? WHERE id = ?`,
-    [...vals, req.user?.id ?? null, now(), id],
+    `UPDATE projects SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
+    [...vals, ts, id],
   )
   const after = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ?`, [id])
   const changes = diffRecords(existing, after || {})
@@ -280,7 +293,8 @@ projectsRouter.delete('/:id', async (req, res) => {
   }
   const ts = now()
   const existingRow = await get<Record<string, unknown>>(`SELECT * FROM projects WHERE id = ?`, [id])
-  await run(`UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ?`, [ts, ts, id])
+  await run(`UPDATE projects SET deleted_at = ?, deleted_by_user_id = ?, updated_by_user_id = ?, updated_at = ? WHERE id = ?`, [ts, req.user?.id ?? null, req.user?.id ?? null, ts, id])
+  await recordDeleted({ itemType: 'project', itemId: id, user: req.user, row: existingRow })
   await logAction({ userId: req.user?.id, actionType: 'delete', itemType: 'project', itemId: id })
   notifyWorkflow({
     category: 'project_lifecycle',

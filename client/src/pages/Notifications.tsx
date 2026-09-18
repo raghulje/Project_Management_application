@@ -99,7 +99,7 @@ export function NotificationsSettings() {
         title="Notifications"
         count="Triggers, templates, and recipients"
       >
-        <Link className="ws-btn ghost" to="/admin/email-logs"><i className="ri-mail-send-line" />Email logs</Link>
+        <Link className="ws-btn ghost" to="/admin/email-logs"><i className="ri-notification-3-line" />Notification logs</Link>
         {canEdit ? (
           <button className="ws-btn ghost" type="button" disabled={runBusy} onClick={() => void runOverdue()}>
             {runBusy ? 'Running...' : 'Run overdue alerts'}
@@ -151,7 +151,7 @@ export function NotificationsSettings() {
           </FrSection>
           <FrSection label="Templates / events" count={snap?.triggers?.length || 0}>
             <p className="fr-sub" style={{ margin: '0 0 12px' }}>Branded HTML emails (project/task/subtask). Each event is logged in Email logs as sent, skipped, or failed.</p>
-            <div className="fr-table-wrap">
+            <div className="fr-table-wrap is-cards">
               <table className="fr-table">
                 <thead><tr><th>Event</th><th>Category</th></tr></thead>
                 <tbody>
@@ -159,13 +159,13 @@ export function NotificationsSettings() {
                     <tr><td colSpan={2} className="fr-empty">No events configured</td></tr>
                   ) : (snap?.triggers || []).map((t) => (
                     <tr key={t.key}>
-                      <td>
+                      <td data-label="Event">
                         <span className="fr-name-cell">
                           <span className="fr-name">{t.label}</span>
                           <span className="fr-sub">{t.key}</span>
                         </span>
                       </td>
-                      <td>{t.category}</td>
+                      <td data-label="Category">{t.category}</td>
                     </tr>
                   ))}
                 </tbody>

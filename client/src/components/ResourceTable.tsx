@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useDebounced } from '../lib/useDebounced'
-import { delayDays, fmt, OwnerAvatar, ProgressBar, Rag, ragTone, ReopenBadge, RevBadge, StatusPill } from '../pages/WorkspaceKit'
+import { delayDays, fmt, isClosedStatus, OwnerAvatar, ProgressBar, Rag, ragTone, ReopenBadge, RevBadge, StatusPill } from '../pages/WorkspaceKit'
 import { FrChips, FrHeader, FrPage, FrPager, FrPanel } from '../pages/FormReference'
 import { navState } from '../lib/recordNav'
+import { Alert } from '../pages/AdminKit'
+import BulkActionMenu from './BulkActionMenu'
 
 type Col = {
   key: string
@@ -24,11 +26,27 @@ type Props = {
   search: string
   onSearch: (q: string) => void
   onDeleteMany?: (ids: number[]) => Promise<void>
+  onExport?: (ids: number[]) => Promise<void>
+  onBulkUpdate?: (ids: number[], patch: { status?: string; priority?: string }) => Promise<{
+    payload?: { updated?: number; skipped?: number; errors?: Array<{ id: number; message: string }> }
+  } | void>
+  noun?: string
   extra?: ReactNode
   defaultSort?: { key: string; order: 'asc' | 'desc' }
 }
 
 const PAGE_SIZE = 20
+
+function bulkNote(
+  verb: string,
+  payload: { updated?: number; skipped?: number; errors?: Array<{ id: number; message: string }> } | undefined,
+  fallback: number,
+) {
+  const updated = payload?.updated ?? fallback
+  const skipped = payload?.skipped || 0
+  const first = payload?.errors?.[0]?.message
+  return `${updated} ${verb}${skipped ? `, ${skipped} skipped` : ''}${first ? `. ${first}` : '.'}`
+}
 const WRAP_KEYS = new Set(['name', 'project_name', 'task_name', 'subject', 'notes', 'detail', 'description', 'title'])
 
 function wrapCell(value: unknown) {
@@ -50,7 +68,8 @@ function nameSub(c: Col, r: Record<string, unknown>) {
 }
 
 export default function ResourceTable({
-  title, subtitle, createTo, createLabel = 'Create', rows, total, columns, search, onSearch, onDeleteMany, extra, defaultSort,
+  title, subtitle, createTo, createLabel = 'Create', rows, total, columns, search, onSearch,
+  onDeleteMany, onExport, onBulkUpdate, noun = 'record', extra, defaultSort,
 }: Props) {
   const nav = useNavigate()
   const loc = useLocation()
@@ -61,6 +80,10 @@ export default function ResourceTable({
   const [sortBy, setSortBy] = useState(defaultSort?.key || columns[0]?.key || 'name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(defaultSort?.order || 'asc')
   const [page, setPage] = useState(1)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const [note, setNote] = useState('')
+  const selectable = Boolean(onDeleteMany || onExport || onBulkUpdate)
   const debounced = useDebounced(localSearch)
   useEffect(() => { setSel([]) }, [rows])
   useEffect(() => { setLocalSearch(search) }, [search])
@@ -94,10 +117,26 @@ export default function ResourceTable({
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const safePage = Math.min(page, pages)
   const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-  const ids = pageRows.map((r) => Number(r.id)).filter((n) => n > 0)
+  const pageOpenIds = pageRows.filter((r) => !isClosedStatus(r.status)).map((r) => Number(r.id)).filter((n) => n > 0)
+  const allOpenIds = filtered.filter((r) => !isClosedStatus(r.status)).map((r) => Number(r.id)).filter((n) => n > 0)
   const rowHref = (r: Record<string, unknown>) => columns.find((c) => c.href)?.href?.(r)
-  const allOn = ids.length > 0 && ids.every((id) => sel.includes(id))
+  const allOn = pageOpenIds.length > 0 && pageOpenIds.every((id) => sel.includes(id))
   const countLabel = subtitle || `${total ?? rows.length} total records`
+  const targetIds = sel.length ? sel : allOpenIds
+  const nounLabel = sel.length === 1 ? noun : `${noun}s`
+
+  async function runAction(label: string, work: () => Promise<void>) {
+    setBusy(label)
+    setErr('')
+    setNote('')
+    try {
+      await work()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : `${label} failed`)
+    } finally {
+      setBusy('')
+    }
+  }
 
   function toggleSort(key: string) {
     if (sortBy === key) setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))
@@ -154,24 +193,59 @@ export default function ResourceTable({
       <FrHeader title={title} count={countLabel}>
         <input className="fr-search" placeholder="Search records..." value={localSearch} onChange={(e) => setLocalSearch(e.target.value)} />
         {extra}
-        {sel.length > 0 && onDeleteMany ? (
-          <button className="ws-btn danger" type="button" onClick={async () => {
-            if (!confirm(`Delete ${sel.length} record(s)?`)) return
-            await onDeleteMany(sel)
-            setSel([])
-          }}>✕ Delete ({sel.length})</button>
-        ) : null}
         {createTo ? <Link className="ws-btn" to={createTo} state={from}><i className="ri-add-line" />{createLabel}</Link> : null}
       </FrHeader>
+      {err ? <Alert kind="err">{err}</Alert> : null}
+      {note ? <Alert kind="ok">{note}</Alert> : null}
+      {selectable && allOpenIds.length ? (
+        <BulkActionMenu
+          selectedCount={sel.length}
+          pageCount={pageOpenIds.length}
+          allCount={allOpenIds.length}
+          noun={noun}
+          busy={!!busy}
+          onSelectPage={() => setSel(pageOpenIds)}
+          onSelectAll={() => setSel(allOpenIds)}
+          onDeselect={() => setSel([])}
+          onExport={onExport ? () => runAction('Export', async () => {
+            await onExport(targetIds)
+            setNote(`Exported ${targetIds.length} ${targetIds.length === 1 ? noun : `${noun}s`}.`)
+          }) : undefined}
+          onMarkClosed={onBulkUpdate ? () => runAction('Close', async () => {
+            const r = await onBulkUpdate(sel, { status: 'Closed' })
+            if (!Number(r?.payload?.updated) && Number(r?.payload?.skipped)) throw new Error(bulkNote('marked closed', r?.payload, 0))
+            setNote(bulkNote('marked closed', r?.payload, sel.length))
+            setSel([])
+          }) : undefined}
+          onStatus={onBulkUpdate ? (next) => runAction('Update', async () => {
+            const r = await onBulkUpdate(sel, { status: next })
+            if (!Number(r?.payload?.updated) && Number(r?.payload?.skipped)) throw new Error(bulkNote(`set to ${next}`, r?.payload, 0))
+            setNote(bulkNote(`set to ${next}`, r?.payload, sel.length))
+            setSel([])
+          }) : undefined}
+          onPriority={onBulkUpdate ? (next) => runAction('Update', async () => {
+            const r = await onBulkUpdate(sel, { priority: next })
+            if (!Number(r?.payload?.updated) && Number(r?.payload?.skipped)) throw new Error(bulkNote(`set to ${next}`, r?.payload, 0))
+            setNote(bulkNote(`set to ${next}`, r?.payload, sel.length))
+            setSel([])
+          }) : undefined}
+          onDelete={onDeleteMany ? () => runAction('Delete', async () => {
+            if (!confirm(`Delete ${sel.length} ${nounLabel}?`)) return
+            await onDeleteMany(sel)
+            setNote(`${sel.length} deleted.`)
+            setSel([])
+          }) : undefined}
+        />
+      ) : null}
       <FrChips items={chips} value={status} onChange={setStatus} />
       <FrPanel>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table">
             <thead>
               <tr>
-                {onDeleteMany ? (
+                {selectable ? (
                   <th style={{ width: 40, textAlign: 'center' }}>
-                    <input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? [] : ids)} />
+                    <input type="checkbox" aria-label="Select open records on this page" checked={allOn} onChange={() => setSel(allOn ? sel.filter((id) => !pageOpenIds.includes(id)) : [...new Set([...sel, ...pageOpenIds])])} />
                   </th>
                 ) : null}
                 {columns.map((c) => (
@@ -184,7 +258,7 @@ export default function ResourceTable({
             </thead>
             <tbody>
               {pageRows.length === 0 ? (
-                <tr><td colSpan={columns.length + (onDeleteMany ? 1 : 0)} className="fr-empty">No records found</td></tr>
+                <tr><td colSpan={columns.length + (selectable ? 1 : 0)} className="fr-empty">No records found</td></tr>
               ) : pageRows.map((r) => {
                 const id = Number(r.id)
                 const href = rowHref(r)
@@ -200,19 +274,24 @@ export default function ResourceTable({
                       nav(href, { state: from })
                     }}
                   >
-                    {onDeleteMany ? (
-                      <td style={{ textAlign: 'center' }}>
+                    {selectable ? (
+                      <td className="fr-select-cell" data-label="Select" style={{ textAlign: 'center' }}>
                         <input
                           type="checkbox"
+                          aria-label={isClosedStatus(r.status) ? 'Already closed' : 'Select open record'}
+                          disabled={isClosedStatus(r.status)}
                           checked={sel.includes(id)}
-                          onChange={() => setSel((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
+                          onChange={() => {
+                            if (isClosedStatus(r.status)) return
+                            setSel((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+                          }}
                         />
                       </td>
                     ) : null}
                     {columns.map((c, idx) => {
                       const href = c.href?.(r) || (idx === 0 ? rowHref(r) : undefined)
                       const value = cell(c, r)
-                      return <td key={c.key}>{href ? <Link to={href} state={from}>{value}</Link> : value}</td>
+                      return <td key={c.key} data-label={c.label}>{href ? <Link to={href} state={from}>{value}</Link> : value}</td>
                     })}
                   </tr>
                 )

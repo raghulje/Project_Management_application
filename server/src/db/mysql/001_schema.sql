@@ -2,7 +2,7 @@
 -- Refex Project Management 2026 — MySQL Schema
 -- Database: ProjectManagement_2026
 -- Same foundation as Asset Management (users / employees / HRMS / RBAC)
--- plus projects → tasks → subtasks from Kissflow field model
+-- plus projects → tasks → subtasks (local-first; Kissflow ids are optional legacy keys)
 -- =============================================================================
 
 SET NAMES utf8mb4;
@@ -217,6 +217,8 @@ CREATE TABLE IF NOT EXISTS `action_logs` (
   `company_id` INT UNSIGNED NULL,
   `note` TEXT NULL,
   `log_meta` JSON NULL,
+  `ip_address` VARCHAR(64) NULL,
+  `user_agent` VARCHAR(255) NULL,
   `action_date` DATETIME NOT NULL,
   `created_at` DATETIME NULL,
   `updated_at` DATETIME NULL,
@@ -228,12 +230,12 @@ CREATE TABLE IF NOT EXISTS `action_logs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
--- Projects (Kissflow Case: Project_Management_A01)
+-- Projects (local id + project_code are canonical; kissflow_id is legacy import)
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `projects` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `kissflow_id` VARCHAR(64) NULL COMMENT 'PRJ-0112',
-  `project_code` VARCHAR(128) NULL COMMENT 'PRJ-Refex-FY026-0035',
+  `kissflow_id` VARCHAR(64) NULL COMMENT 'Legacy Kissflow case id, optional',
+  `project_code` VARCHAR(128) NULL COMMENT 'Business code, e.g. PRJ-2026-0001',
   `name` VARCHAR(255) NOT NULL,
   `status` VARCHAR(64) NOT NULL DEFAULT 'Open',
   `priority` VARCHAR(32) NULL,
@@ -291,6 +293,10 @@ CREATE TABLE IF NOT EXISTS `projects` (
   `assignee_name` VARCHAR(191) NULL,
   `created_by_user_id` INT UNSIGNED NULL,
   `updated_by_user_id` INT UNSIGNED NULL,
+  `source` VARCHAR(16) NOT NULL DEFAULT 'local',
+  `closed_at` DATETIME NULL,
+  `closed_by_user_id` INT UNSIGNED NULL,
+  `deleted_by_user_id` INT UNSIGNED NULL,
   `kissflow_created_at` DATETIME NULL,
   `kissflow_modified_at` DATETIME NULL,
   `created_at` DATETIME NULL,
@@ -302,6 +308,11 @@ CREATE TABLE IF NOT EXISTS `projects` (
   KEY `idx_projects_status` (`status`),
   KEY `idx_projects_category` (`category`),
   KEY `idx_projects_owner` (`project_owner_employee_id`),
+  KEY `idx_projects_source` (`source`),
+  KEY `idx_projects_closed` (`closed_at`),
+  KEY `idx_projects_company_name` (`company_name`),
+  KEY `idx_projects_dates` (`start_date`, `end_date`),
+  KEY `idx_projects_created_by` (`created_by_user_id`),
   KEY `idx_projects_deleted` (`deleted_at`),
   CONSTRAINT `fk_projects_company` FOREIGN KEY (`company_id`) REFERENCES `companies` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -319,12 +330,12 @@ CREATE TABLE IF NOT EXISTS `project_timeline_history` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
--- Tasks (Kissflow Process: Project_Sub_Task_A01)
+-- Tasks (local id + task_code are canonical; kissflow_id is legacy import)
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `tasks` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `kissflow_id` VARCHAR(64) NULL COMMENT 'PkE9N2WrtASE',
-  `task_code` VARCHAR(191) NULL COMMENT 'Task-PRJ-Refex-FY026-0035-017',
+  `kissflow_id` VARCHAR(64) NULL COMMENT 'Legacy Kissflow process id, optional',
+  `task_code` VARCHAR(191) NULL COMMENT 'Business code, e.g. TSK-2026-0001',
   `project_id` INT UNSIGNED NULL,
   `name` VARCHAR(255) NOT NULL,
   `detail` MEDIUMTEXT NULL,
@@ -351,8 +362,13 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   `l2_manager_email` VARCHAR(191) NULL,
   `root_cause_analysis` TEXT NULL,
   `created_by_user_id` INT UNSIGNED NULL,
+  `updated_by_user_id` INT UNSIGNED NULL,
   `created_by_name` VARCHAR(191) NULL,
   `created_by_email` VARCHAR(191) NULL,
+  `source` VARCHAR(16) NOT NULL DEFAULT 'local',
+  `closed_at` DATETIME NULL,
+  `closed_by_user_id` INT UNSIGNED NULL,
+  `deleted_by_user_id` INT UNSIGNED NULL,
   `kissflow_created_at` DATETIME NULL,
   `created_at` DATETIME NULL,
   `updated_at` DATETIME NULL,
@@ -363,6 +379,10 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   KEY `idx_tasks_project` (`project_id`),
   KEY `idx_tasks_status` (`status`),
   KEY `idx_tasks_assignee` (`assigned_to_employee_id`),
+  KEY `idx_tasks_source` (`source`),
+  KEY `idx_tasks_closed` (`closed_at`),
+  KEY `idx_tasks_dates` (`end_date`),
+  KEY `idx_tasks_created_by` (`created_by_user_id`),
   KEY `idx_tasks_deleted` (`deleted_at`),
   CONSTRAINT `fk_tasks_project` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_tasks_assignee` FOREIGN KEY (`assigned_to_employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL,
@@ -370,11 +390,12 @@ CREATE TABLE IF NOT EXISTS `tasks` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
--- Subtasks (Kissflow Process: Sub_Task_Process_A00)
+-- Subtasks (local id + subtask_code are canonical; kissflow_id is legacy import)
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `subtasks` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `kissflow_id` VARCHAR(64) NULL,
+  `kissflow_id` VARCHAR(64) NULL COMMENT 'Legacy Kissflow process id, optional',
+  `subtask_code` VARCHAR(191) NULL COMMENT 'Business code, e.g. SUB-2026-0001',
   `task_id` INT UNSIGNED NULL,
   `name` VARCHAR(255) NOT NULL,
   `summary` TEXT NULL,
@@ -389,7 +410,12 @@ CREATE TABLE IF NOT EXISTS `subtasks` (
   `l1_manager_email` VARCHAR(191) NULL,
   `l2_manager_email` VARCHAR(191) NULL,
   `created_by_user_id` INT UNSIGNED NULL,
+  `updated_by_user_id` INT UNSIGNED NULL,
   `created_by_name` VARCHAR(191) NULL,
+  `source` VARCHAR(16) NOT NULL DEFAULT 'local',
+  `closed_at` DATETIME NULL,
+  `closed_by_user_id` INT UNSIGNED NULL,
+  `deleted_by_user_id` INT UNSIGNED NULL,
   `kissflow_created_at` DATETIME NULL,
   `created_at` DATETIME NULL,
   `updated_at` DATETIME NULL,
@@ -397,8 +423,12 @@ CREATE TABLE IF NOT EXISTS `subtasks` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_subtasks_kissflow` (`kissflow_id`),
   KEY `idx_subtasks_task` (`task_id`),
+  KEY `idx_subtasks_code` (`subtask_code`),
   KEY `idx_subtasks_status` (`status`),
   KEY `idx_subtasks_assignee` (`assigned_to_employee_id`),
+  KEY `idx_subtasks_source` (`source`),
+  KEY `idx_subtasks_closed` (`closed_at`),
+  KEY `idx_subtasks_dates` (`end_date`),
   KEY `idx_subtasks_deleted` (`deleted_at`),
   CONSTRAINT `fk_subtasks_task` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_subtasks_assignee` FOREIGN KEY (`assigned_to_employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL

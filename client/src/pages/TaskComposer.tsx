@@ -13,6 +13,7 @@ import WsDate from './WsDate'
 import PersonPicker from './PersonPicker'
 import StatusTracker, { type StatusRevision } from './StatusTracker'
 import { defaultList, fromState, pageCrumbs, stateFor } from '../lib/recordNav'
+import { matchChoice, profileFromUser, withChoice } from '../lib/employeeDefaults'
 import { FrAcc, FrField, FrFoot, FrGrid, FrSheet, FrSheetBody, FrSheetHead, FrSheetMain, FrSection, FrYesNo } from './FormReference'
 
 type Comment = { id?: number; body: string; created_by_name?: string; created_at?: string; local?: boolean }
@@ -40,6 +41,7 @@ export default function TaskComposer() {
   const [policy, setPolicy] = useState<EditPolicy | null>(null)
   const req = useRequestAccess()
   const [projects, setProjects] = useState<{ value: string; label: string }[]>([])
+  const [entityOpts, setEntityOpts] = useState<string[]>(COMPANY_OPTS)
   const [siblings, setSiblings] = useState<{ value: string; label: string }[]>([])
   const [tab, setTab] = useState<'status' | 'comments' | 'files'>('status')
   const [rail, setRail] = useState<'open' | 'min'>('open')
@@ -71,12 +73,39 @@ export default function TaskComposer() {
   const [createdAt, setCreatedAt] = useState('')
   const [revisions, setRevisions] = useState<StatusRevision[]>([])
   const [reopenCount, setReopenCount] = useState(0)
+  const seeded = useRef(false)
+
+  useEffect(() => {
+    if (id || seeded.current) return
+    const profile = profileFromUser(user)
+    if (!profile) return
+    seeded.current = true
+    const company = matchChoice(profile.company, COMPANY_OPTS)
+    setForm((f) => ({
+      ...f,
+      entity: f.entity || company,
+      created_by_name: f.created_by_name || profile.name || me,
+      assigned_to_name: f.assigned_to_name || profile.name,
+    }))
+    if (profile.name) setTagged((prev) => prev.includes(profile.name) ? prev : [...prev, profile.name])
+    if (company) setEntityOpts((prev) => withChoice(prev, company))
+  }, [id, user, me])
 
   useEffect(() => {
     projectsApi.selectlist().then((r) => {
       setProjects((r.results || []).map((o) => ({ value: String(o.id), label: o.text })))
     }).catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    if (id || !form.project_id) return
+    projectsApi.get(form.project_id).then((r) => {
+      const company = String(r.company_name || r.entity || '').trim()
+      if (!company) return
+      setForm((f) => ({ ...f, entity: company }))
+      setEntityOpts((prev) => withChoice(prev, company))
+    }).catch(() => undefined)
+  }, [form.project_id, id])
 
   useEffect(() => {
     if (!form.project_id) { setSiblings([]); return }
@@ -341,7 +370,7 @@ export default function TaskComposer() {
                   <WsSelect value={form.task_type} disabled={lock('task_type')} placeholder="Select..." options={[{ value: '', label: 'Select...' }, ...TASK_TYPE_OPTS]} onChange={(v) => set('task_type', v)} />
                 </FrField>
                 <FrField label="Entity" locked={lock('entity')} mark={mark('entity')}>
-                  <WsSelect value={form.entity} disabled={lock('entity')} placeholder="Select..." options={[{ value: '', label: 'Select...' }, ...COMPANY_OPTS]} onChange={(v) => set('entity', v)} />
+                  <WsSelect value={form.entity} disabled={lock('entity')} placeholder="Select..." options={[{ value: '', label: 'Select...' }, ...entityOpts]} onChange={(v) => set('entity', v)} />
                 </FrField>
                 <FrField label="Is dependent on another task?" locked={lock('is_dependent')} mark={mark('is_dependent')} span={2}>
                   <FrYesNo

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { subtasksApi, tasksApi } from '../api/client'
 import { useAuth } from '../api/AuthContext'
@@ -11,6 +11,7 @@ import WsSelect from './WsSelect'
 import WsDate from './WsDate'
 import PersonPicker from './PersonPicker'
 import { defaultList, fromState, pageCrumbs, stateFor } from '../lib/recordNav'
+import { profileFromUser } from '../lib/employeeDefaults'
 import { isClosedStatus, ReopenAction, ReopenBadge } from './WorkspaceKit'
 import { FrAcc, FrField, FrFoot, FrGrid, FrSheet, FrSheetBody, FrSheetHead, FrSheetMain, FrSection } from './FormReference'
 
@@ -19,7 +20,7 @@ export default function SubtaskComposer() {
   const [params] = useSearchParams()
   const nav = useNavigate()
   const loc = useLocation()
-  const { isEmployee } = useAuth()
+  const { user, isEmployee } = useAuth()
 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -37,6 +38,15 @@ export default function SubtaskComposer() {
     end_date: '',
   })
   const [reopenCount, setReopenCount] = useState(0)
+  const seeded = useRef(false)
+
+  useEffect(() => {
+    if (id || seeded.current) return
+    const profile = profileFromUser(user)
+    if (!profile?.name) return
+    seeded.current = true
+    setForm((f) => ({ ...f, assigned_to_name: f.assigned_to_name || profile.name }))
+  }, [id, user])
 
   useEffect(() => {
     tasksApi.selectlist().then((r) => {

@@ -121,7 +121,7 @@ function MasterModule({
       ) : null}
 
       <FrPanel>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table">
             <thead>
               <tr>
@@ -135,7 +135,7 @@ function MasterModule({
               ) : pageRows.map((r) => (
                 <tr key={String(r.id)}>
                   {fields.map((f, i) => (
-                    <td key={f.key}>
+                    <td key={f.key} data-label={f.label}>
                       {i === 0 || f.key === 'notes' || f.key === 'address' ? (
                         <span className="fr-name-cell">
                           <span className="fr-name">{String(r[f.key] || '—')}</span>
@@ -144,7 +144,7 @@ function MasterModule({
                       ) : String(r[f.key] || '—')}
                     </td>
                   ))}
-                  <td>
+                  <td data-label="Actions">
                     <span className="ak-acts">
                       <button className="fr-icon-btn" type="button" title="Edit" onClick={() => startEdit(r)}><i className="ri-pencil-line" /></button>
                       <button className="fr-icon-btn danger" type="button" title="Delete" onClick={() => void remove(String(r.id))}><i className="ri-delete-bin-line" /></button>

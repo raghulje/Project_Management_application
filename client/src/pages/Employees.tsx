@@ -113,7 +113,7 @@ export function EmployeesList() {
         }}
       />
       <FrPanel>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table">
             <thead>
               <tr>
@@ -132,8 +132,8 @@ export function EmployeesList() {
                 <tr><td colSpan={8} className="fr-empty">{loading ? 'Loading...' : 'No records found'}</td></tr>
               ) : rows.map((r) => (
                 <tr key={String(r.id)} className="is-clickable" onClick={() => nav(`/employees/${r.id}`)}>
-                  <td><Link to={`/employees/${r.id}`}>{fmt(r.employee_code)}</Link></td>
-                  <td>
+                  <td data-label="Employee ID"><Link to={`/employees/${r.id}`}>{fmt(r.employee_code)}</Link></td>
+                  <td data-label="Name">
                     <span className="fr-owner-row">
                       <OwnerAvatar name={r.name} />
                       <span className="fr-name-cell">
@@ -142,20 +142,20 @@ export function EmployeesList() {
                       </span>
                     </span>
                   </td>
-                  <td>{fmt(r.email)}</td>
-                  <td>
+                  <td data-label="Email">{fmt(r.email)}</td>
+                  <td data-label="Department">
                     <span className="fr-name-cell"><span className="fr-name">{fmt(r.department_name)}</span></span>
                   </td>
-                  <td>
+                  <td data-label="Designation">
                     <span className="fr-name-cell"><span className="fr-name">{fmt(r.designation)}</span></span>
                   </td>
-                  <td>
+                  <td data-label="Company">
                     <span className="fr-name-cell"><span className="fr-name">{fmt(r.refex_company_name)}</span></span>
                   </td>
-                  <td>
+                  <td data-label="Location">
                     <span className="fr-name-cell"><span className="fr-name">{fmt(r.refex_location)}</span></span>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <StatusPill value={r.employment_status_description || (isActive(r) ? 'Active' : 'Inactive')} />
                   </td>
                 </tr>

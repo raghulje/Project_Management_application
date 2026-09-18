@@ -17,6 +17,7 @@ import {
   TasksList,
   UsersList,
 } from './pages/Records'
+import { ProjectImport, SubtaskImport, TaskImport } from './pages/RecordImport'
 import { CompaniesPage, DepartmentsPage, LocationsPage } from './pages/Masters'
 import { EmployeeDetail, EmployeeForm, EmployeeImport } from './pages/Employees'
 import { AdminHub, RolesEditor } from './pages/Admin'
@@ -27,9 +28,7 @@ import BoardPage from './pages/BoardPage'
 
 const ProjectDashboardPage = lazy(() => import('./tracker/ProjectDashboardPage.jsx'))
 const UserSpecificPT = lazy(() => import('./tracker/UserSpecificPT.jsx'))
-const UserHubProjectsProject = lazy(() => import('./tracker/UserHubProjectsProject.jsx'))
-const UserHubTasksProject = lazy(() => import('./tracker/UserHubTasksProject.jsx'))
-const UserHubSubTasksProject = lazy(() => import('./tracker/UserHubSubTasksProject.jsx'))
+const ReportsProject = lazy(() => import('./tracker/ReportsProject.jsx'))
 
 function ScreenFallback() {
   return (
@@ -89,9 +88,16 @@ function ExecDashboard() {
   )
 }
 
+function RequireReports({ children }: { children: ReactNode }) {
+  const { can, isAdmin, isEmployee } = useAuth()
+  if (isEmployee && !isAdmin) return <p className="ak-gate">Reports are for leadership.</p>
+  if (!isAdmin && !can('reports.view')) return <p className="ak-gate">You do not have reports.view.</p>
+  return children
+}
+
 function Home() {
   const { isEmployee } = useAuth()
-  if (isEmployee) return <Navigate to="/hub/projects" replace />
+  if (isEmployee) return <Navigate to="/dashboard/my-work" replace />
   return <Gate perm="projects.view"><ExecDashboard /></Gate>
 }
 
@@ -112,21 +118,25 @@ export default function App() {
               <Routes>
                 <Route element={<AppLayout />}>
                   <Route path="/" element={<Home />} />
+                  <Route path="/reports" element={<RequireReports><Track><ReportsProject /></Track></RequireReports>} />
                   <Route path="/dashboard/my-work" element={<Gate perm="tasks.view"><Track><UserSpecificPT /></Track></Gate>} />
-                  <Route path="/hub/projects" element={<Gate perm="projects.view"><Track><UserHubProjectsProject /></Track></Gate>} />
-                  <Route path="/hub/tasks" element={<Gate perm="tasks.view"><Track><UserHubTasksProject /></Track></Gate>} />
-                  <Route path="/hub/subtasks" element={<Gate perm="subtasks.view"><Track><UserHubSubTasksProject /></Track></Gate>} />
+                  <Route path="/hub/projects" element={<Navigate to="/projects" replace />} />
+                  <Route path="/hub/tasks" element={<Navigate to="/tasks" replace />} />
+                  <Route path="/hub/subtasks" element={<Navigate to="/subtasks" replace />} />
                   <Route path="/approvals" element={<ApprovalsPage />} />
                   <Route path="/projects" element={<Gate perm="projects.view"><ProjectsList /></Gate>} />
+                  <Route path="/projects/import" element={<Gate perm="projects.create"><ProjectImport /></Gate>} />
                   <Route path="/projects/new" element={<Gate perm="projects.create"><ProjectForm /></Gate>} />
                   <Route path="/projects/:id" element={<Gate perm="projects.view"><ProjectDetail /></Gate>} />
                   <Route path="/projects/:id/edit" element={<Gate perm="projects.edit"><ProjectForm /></Gate>} />
                   <Route path="/board" element={<Gate perm="tasks.view"><BoardPage /></Gate>} />
                   <Route path="/tasks" element={<Gate perm="tasks.view"><TasksList /></Gate>} />
+                  <Route path="/tasks/import" element={<Gate perm="tasks.create"><TaskImport /></Gate>} />
                   <Route path="/tasks/new" element={<Gate perm="tasks.create"><TaskForm /></Gate>} />
                   <Route path="/tasks/:id" element={<Gate perm="tasks.view"><TaskDetail /></Gate>} />
                   <Route path="/tasks/:id/edit" element={<Gate perm="tasks.edit"><TaskForm /></Gate>} />
                   <Route path="/subtasks" element={<Gate perm="subtasks.view"><SubtasksList /></Gate>} />
+                  <Route path="/subtasks/import" element={<Gate perm="subtasks.create"><SubtaskImport /></Gate>} />
                   <Route path="/subtasks/new" element={<Gate perm="subtasks.create"><SubtaskForm /></Gate>} />
                   <Route path="/subtasks/:id" element={<Gate perm="subtasks.view"><SubtaskDetail /></Gate>} />
                   <Route path="/subtasks/:id/edit" element={<Gate perm="subtasks.edit"><SubtaskForm /></Gate>} />

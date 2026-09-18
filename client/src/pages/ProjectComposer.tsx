@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { mastersApi, projectsApi, activityApi } from '../api/client'
 import { useAuth } from '../api/AuthContext'
@@ -15,6 +15,7 @@ import WsDate from './WsDate'
 import PersonPicker from './PersonPicker'
 import StatusTracker, { type StatusRevision } from './StatusTracker'
 import { defaultList, fromState, pageCrumbs, stateFor } from '../lib/recordNav'
+import { displayEntity, matchChoice, matchOption, profileFromUser, withChoice } from '../lib/employeeDefaults'
 import { isClosedStatus, ReopenAction, ReopenBadge } from './WorkspaceKit'
 import { FrAcc, FrField, FrFoot, FrGrid, FrSheet, FrSheetBody, FrSheetHead, FrSheetMain, FrSection, FrUpload, FrYesNo } from './FormReference'
 
@@ -97,13 +98,34 @@ export default function ProjectComposer() {
   const [createdAt, setCreatedAt] = useState('')
   const [revisions, setRevisions] = useState<StatusRevision[]>([])
   const [reopenCount, setReopenCount] = useState(0)
+  const seeded = useRef(false)
 
   useEffect(() => {
     mastersApi.companies.list({ limit: 300 }).then((r) => {
       const names = r.rows.map((row) => String(row.name || '')).filter(Boolean)
-      if (names.length) setCompanies([...new Set([...COMPANY_OPTS, ...names])])
+      if (names.length) setCompanies((prev) => [...new Set([...prev, ...COMPANY_OPTS, ...names])])
     }).catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    if (id || seeded.current) return
+    const profile = profileFromUser(user)
+    if (!profile) return
+    seeded.current = true
+    const company = matchChoice(profile.company, [...COMPANY_OPTS, ...companies])
+    const category = matchOption(profile.department, CATEGORY_OPTS)
+    setForm((f) => ({
+      ...f,
+      company_name: f.company_name || company,
+      entity: f.entity || displayEntity(profile),
+      requester_name: f.requester_name || profile.name,
+      assignee_name: f.assignee_name || profile.name,
+      project_owner_name: f.project_owner_name || profile.name,
+      category: f.category || category,
+      business: f.business || profile.business_line,
+    }))
+    if (company) setCompanies((prev) => withChoice(prev, company))
+  }, [id, user])
 
   useEffect(() => {
     if (!id) return

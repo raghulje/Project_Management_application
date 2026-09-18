@@ -289,18 +289,24 @@ export function RevisionLog({ rows }: { rows: Record<string, unknown>[] }) {
     <div className="ws-audit">
       {rows.map((r) => {
         const changes = Array.isArray(r.changes) ? r.changes as Array<{ field?: string; label?: string; from?: string; to?: string }> : []
+        const action = String(r.action || '')
         const reopen = changes.find((c) => c.field === 'reopen_reason')
+        const isReopen = action === 'reopen' || Boolean(reopen)
+        const created = action === 'create' || action === 'import'
+        const removed = action === 'delete'
         const reopenNo = changes.find((c) => c.field === 'reopen_count')?.to || ''
         const n = changes.length
+        const who = isReopen ? 'Re-opened by' : created ? 'Created by' : removed ? 'Deleted by' : 'Updated by'
+        const tag = isReopen ? 'Re-open' : created ? (action === 'import' ? 'Imported' : 'Created') : removed ? 'Deleted' : `${n} ${n === 1 ? 'change' : 'changes'}`
         return (
-          <article key={String(r.id || r.revision_no)} className={`ws-audit-card${reopen ? ' is-reopen' : ''}`}>
+          <article key={String(r.id || r.revision_no)} className={`ws-audit-card${isReopen ? ' is-reopen' : ''}`}>
             <header className="ws-audit-head">
-              <span className="ws-audit-no">{reopen ? (reopenNo || 'R') : `#${String(r.revision_no)}`}</span>
+              <span className="ws-audit-no">{isReopen ? (reopenNo || 'R') : `#${String(r.revision_no)}`}</span>
               <div className="ws-audit-who">
-                <b>{reopen ? 'Re-opened by' : 'Updated by'} {fmt(r.user_name)}</b>
+                <b>{who} {fmt(r.user_name)}</b>
                 <span>{fmtWhen(r.created_at)}</span>
               </div>
-              <em>{reopen ? 'Re-open' : `${n} ${n === 1 ? 'change' : 'changes'}`}</em>
+              <em>{tag}</em>
             </header>
             <div className="ws-audit-body">
               {reopen ? (

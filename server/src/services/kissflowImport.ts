@@ -233,27 +233,24 @@ async function upsertPortfolio(
       kissflow_created_at: dt(p._created_at),
       kissflow_modified_at: dt(p._modified_at),
     }
-    const cols = Object.keys(fields)
-    const vals = Object.values(fields)
     let id: number
     if (existing) {
-      await run(
-        `UPDATE projects SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-        [...vals, ts, existing.id],
-      )
       id = existing.id
-    } else {
-      const info = await run(
-        `INSERT INTO projects (${cols.join(',')}, created_at, updated_at) VALUES (${cols.map(() => '?').join(',')}, ?, ?)`,
-        [...vals, ts, ts],
-      )
-      id = Number(info.insertId)
-      pCreated += 1
+      projectIdByKissflow.set(kid, id)
+      continue
     }
+    const insert: Record<string, unknown> = { ...fields, source: 'legacy' }
+    const cols = Object.keys(insert)
+    const vals = Object.values(insert)
+    const info = await run(
+      `INSERT INTO projects (${cols.join(',')}, created_at, updated_at) VALUES (${cols.map(() => '?').join(',')}, ?, ?)`,
+      [...vals, ts, ts],
+    )
+    id = Number(info.insertId)
+    pCreated += 1
     projectIdByKissflow.set(kid, id)
 
     if (Array.isArray(p.Project_Timeline_History)) {
-      await run(`DELETE FROM project_timeline_history WHERE project_id = ?`, [id])
       for (const h of p.Project_Timeline_History) {
         const revised = h.New_Revised_Date
           ? new Date(h.New_Revised_Date).toISOString().slice(0, 10)
@@ -275,7 +272,14 @@ async function upsertPortfolio(
     if (!kid) continue
     const ref = t.Project_ID && typeof t.Project_ID === 'object' ? t.Project_ID : {}
     const projKid = String(ref._id || ref._item_id || '')
-    const projectId = projKid ? projectIdByKissflow.get(projKid) || null : null
+    let projectId = projKid ? projectIdByKissflow.get(projKid) || null : null
+    if (!projectId && projKid) {
+      const linked = await get<{ id: number }>(`SELECT id FROM projects WHERE kissflow_id = ?`, [projKid])
+      if (linked?.id) {
+        projectId = linked.id
+        projectIdByKissflow.set(projKid, linked.id)
+      }
+    }
     const fields: Record<string, unknown> = {
       kissflow_id: kid,
       task_code: clip(t.Subtaxk_id || t.Task_ID_Formulated, 191),
@@ -305,22 +309,24 @@ async function upsertPortfolio(
       kissflow_created_at: dt(t._created_at),
     }
     let id: number
-    const existing = await get<{ id: number }>(`SELECT id FROM tasks WHERE kissflow_id = ?`, [kid])
-    if (existing && !projectId) delete fields.project_id
-    const cols = Object.keys(fields)
-    const vals = Object.values(fields)
+    const existing = await get<{ id: number; project_id: number | null }>(`SELECT id, project_id FROM tasks WHERE kissflow_id = ?`, [kid])
     if (existing) {
-      await run(
-        `UPDATE tasks SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-        [...vals, ts, existing.id],
-      )
+      if (projectId && !existing.project_id) {
+        await run(`UPDATE tasks SET project_id = ? WHERE id = ?`, [projectId, existing.id])
+      }
       id = existing.id
     } else {
+      const insert: Record<string, unknown> = { ...fields, source: 'legacy' }
+      const cols = Object.keys(insert)
+      const vals = Object.values(insert)
       const info = await run(
         `INSERT INTO tasks (${cols.join(',')}, created_at, updated_at) VALUES (${cols.map(() => '?').join(',')}, ?, ?)`,
         [...vals, ts, ts],
       )
       id = Number(info.insertId)
+      if (!insert.task_code) {
+        await run(`UPDATE tasks SET task_code = CONCAT('TSK-', id) WHERE id = ?`, [id])
+      }
       tCreated += 1
     }
     if (kid) taskIdByKissflow.set(kid, id)
@@ -354,20 +360,20 @@ async function upsertPortfolio(
       created_by_name: clip(uname(s._created_by), 191),
       kissflow_created_at: dt(s._created_at),
     }
-    const existing = await get<{ id: number }>(`SELECT id FROM subtasks WHERE kissflow_id = ?`, [kid])
-    if (existing && !taskId) delete fields.task_id
-    const cols = Object.keys(fields)
-    const vals = Object.values(fields)
+    const existing = await get<{ id: number; task_id: number | null }>(`SELECT id, task_id FROM subtasks WHERE kissflow_id = ?`, [kid])
     if (existing) {
-      await run(
-        `UPDATE subtasks SET ${cols.map((c) => `${c} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-        [...vals, ts, existing.id],
-      )
+      if (taskId && !existing.task_id) {
+        await run(`UPDATE subtasks SET task_id = ? WHERE id = ?`, [taskId, existing.id])
+      }
     } else {
-      await run(
+      const insert: Record<string, unknown> = { ...fields, source: 'legacy' }
+      const cols = Object.keys(insert)
+      const vals = Object.values(insert)
+      const info = await run(
         `INSERT INTO subtasks (${cols.join(',')}, created_at, updated_at) VALUES (${cols.map(() => '?').join(',')}, ?, ?)`,
         [...vals, ts, ts],
       )
+      await run(`UPDATE subtasks SET subtask_code = CONCAT('SUB-', id) WHERE id = ? AND (subtask_code IS NULL OR subtask_code = '')`, [Number(info.insertId)])
       sCreated += 1
     }
   }

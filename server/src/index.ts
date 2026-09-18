@@ -55,4 +55,5 @@ app.listen(port, host, () => {
   console.log(`Health: http://localhost:${port}/api/v1/status`)
   console.log(`Login:  POST /api/v1/login  { "email": "…", "password": "…" }`)
   startHrmsAutoSync()
+  void import('./services/overdueAlerts.js').then((m) => m.startOverdueAlertsScheduler())
 })

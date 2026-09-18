@@ -1,6 +1,7 @@
 import { all, get } from '../db/index.js'
 import { nest } from '../utils/response.js'
 import { parsePerms } from './permissions.js'
+import { loadEmployeeProfile } from './employeeProfile.js'
 
 export async function transformUser(id: number, opts?: { includeDeleted?: boolean }) {
   const deletedClause = opts?.includeDeleted ? '' : ' AND u.deleted_at IS NULL'
@@ -22,6 +23,11 @@ export async function transformUser(id: number, opts?: { includeDeleted?: boolea
     ORDER BY g.name ASC
   `, [id])
   const roles = groups.map((g) => String(g.name || '')).filter(Boolean)
+  const employee = await loadEmployeeProfile({
+    employee_num: u.employee_num != null ? String(u.employee_num) : null,
+    email: u.email != null ? String(u.email) : null,
+    username: u.username != null ? String(u.username) : null,
+  })
   return {
     id: u.id,
     avatar: null,
@@ -39,6 +45,7 @@ export async function transformUser(id: number, opts?: { includeDeleted?: boolea
     company: nest(u.company_id as number, u.company_name as string),
     location: nest(u.location_id as number, u.location_name as string),
     department: nest(u.department_id as number, u.department_name as string),
+    employee,
     permissions: perms,
     roles,
     groups: roles,

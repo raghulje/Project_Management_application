@@ -15,6 +15,8 @@ export type RevisionRow = {
   revision_no: number
   user_id: number | null
   user_name: string
+  action: string
+  reason: string
   changes: RevisionChange[]
   created_at: string
 }
@@ -22,7 +24,8 @@ export type RevisionRow = {
 const SKIP = new Set([
   'id', 'created_at', 'updated_at', 'deleted_at',
   'created_by_user_id', 'updated_by_user_id',
-  'kissflow_id', 'kissflow_created_at', 'kissflow_modified_at',
+  'closed_by_user_id', 'deleted_by_user_id', 'closed_at',
+  'source', 'kissflow_id', 'kissflow_created_at', 'kissflow_modified_at',
   'hrms_payload', 'synced_at',
   'project_name', 'project_kissflow_id', 'task_name',
   'parent_task_code', 'parent_task_kissflow_id', 'parent_task_name',
@@ -38,6 +41,7 @@ const LABELS: Record<string, string> = {
   name: 'Name',
   project_code: 'Project code',
   task_code: 'Task code',
+  subtask_code: 'Subtask code',
   status: 'Status',
   priority: 'Priority',
   rag: 'RAG',
@@ -155,11 +159,19 @@ function actorAudit(user?: {
   return name
 }
 
+const CREATE_FIELDS: Record<'project' | 'task' | 'subtask', string[]> = {
+  project: ['name', 'project_code', 'status', 'priority', 'company_name', 'project_owner_name'],
+  task: ['name', 'task_code', 'status', 'priority', 'assigned_to_name', 'project_id'],
+  subtask: ['name', 'subtask_code', 'status', 'priority', 'assigned_to_name', 'task_id'],
+}
+
 export async function recordRevision(opts: {
   itemType: 'project' | 'task' | 'subtask'
   itemId: number
   user?: { id?: number; first_name?: string; last_name?: string; username?: string; email?: string | null } | null
   changes: RevisionChange[]
+  action?: string
+  reason?: string | null
 }) {
   if (!opts.changes.length) return null
   const last = await get<{ n: number | null }>(
@@ -169,18 +181,52 @@ export async function recordRevision(opts: {
   const revisionNo = Number(last?.n || 0) + 1
   const ts = now()
   await run(`
-    INSERT INTO record_revisions (item_type, item_id, revision_no, user_id, user_name, changes_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO record_revisions (item_type, item_id, revision_no, user_id, user_name, action, reason, changes_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     opts.itemType,
     opts.itemId,
     revisionNo,
     opts.user?.id ?? null,
     actorAudit(opts.user),
+    opts.action || 'update',
+    opts.reason || null,
     JSON.stringify(opts.changes),
     ts,
   ])
   return revisionNo
+}
+
+export async function recordCreated(opts: {
+  itemType: 'project' | 'task' | 'subtask'
+  itemId: number
+  user?: { id?: number; first_name?: string; last_name?: string; username?: string; email?: string | null } | null
+  row: Record<string, unknown>
+  action?: string
+}) {
+  const changes = diffRecords({}, opts.row, CREATE_FIELDS[opts.itemType])
+  if (!changes.length) {
+    changes.push({ field: 'record', label: 'Record', from: '—', to: 'Created' })
+  }
+  return recordRevision({ ...opts, action: opts.action || 'create', changes })
+}
+
+export async function recordDeleted(opts: {
+  itemType: 'project' | 'task' | 'subtask'
+  itemId: number
+  user?: { id?: number; first_name?: string; last_name?: string; username?: string; email?: string | null } | null
+  row?: Record<string, unknown> | null
+}) {
+  return recordRevision({
+    itemType: opts.itemType,
+    itemId: opts.itemId,
+    user: opts.user,
+    action: 'delete',
+    changes: [
+      { field: 'deleted', label: 'Deleted', from: 'No', to: 'Yes' },
+      { field: 'name', label: 'Name', from: String(opts.row?.name || '—'), to: '—' },
+    ],
+  })
 }
 
 function parseChanges(raw: unknown): RevisionChange[] {
@@ -199,6 +245,8 @@ function mapRevisionRow(r: Record<string, unknown>): RevisionRow {
     revision_no: Number(r.revision_no),
     user_id: r.user_id == null ? null : Number(r.user_id),
     user_name: String(r.user_name || 'Someone'),
+    action: String(r.action || (isReopenRevision({ changes: parseChanges(r.changes_json) }) ? 'reopen' : 'update')),
+    reason: String(r.reason || ''),
     changes: parseChanges(r.changes_json),
     created_at: String(r.created_at || ''),
   }
@@ -210,7 +258,7 @@ export function isReopenRevision(row: { changes?: RevisionChange[] }) {
 
 export async function listRevisions(itemType: string, itemId: number): Promise<RevisionRow[]> {
   const rows = await all<Record<string, unknown>>(`
-    SELECT id, item_type, item_id, revision_no, user_id, user_name, changes_json, created_at
+    SELECT id, item_type, item_id, revision_no, user_id, user_name, action, reason, changes_json, created_at
     FROM record_revisions
     WHERE item_type = ? AND item_id = ?
     ORDER BY revision_no DESC
@@ -220,7 +268,7 @@ export async function listRevisions(itemType: string, itemId: number): Promise<R
 
 export async function loadRevisionIndex() {
   const rows = await all<Record<string, unknown>>(`
-    SELECT id, item_type, item_id, revision_no, user_id, user_name, changes_json, created_at
+    SELECT id, item_type, item_id, revision_no, user_id, user_name, action, reason, changes_json, created_at
     FROM record_revisions
     ORDER BY item_type ASC, item_id ASC, revision_no ASC
   `).catch(() => [] as Record<string, unknown>[])

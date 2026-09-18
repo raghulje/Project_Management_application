@@ -3,15 +3,19 @@ import { all, get, run, now, limitSql } from '../db/index.js'
 import { fail, okItem, okList, okMessage } from '../utils/response.js'
 import { logAction } from '../services/actionLog.js'
 import { actorLabel, notifyWorkflow, resolvePersonEmail, val } from '../services/notify.js'
-import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordRevision } from '../services/revisions.js'
+import { attachRevisionCounts, diffRecords, isReopenRevision, listRevisions, recordCreated, recordDeleted, recordRevision } from '../services/revisions.js'
+import { lifecycleFields, mergeWrite, prepareCreateBody, stampCreateWrite } from '../services/recordIdentity.js'
 import { attachEditPolicy, filterWritableUpdate, resolveAssignmentMeta } from '../services/fieldAccess.js'
+import { applyCreateDefaults } from '../services/employeeProfile.js'
 import { isReopenAttempt, reopenRecord } from '../services/reopen.js'
 import { resolveVisibility, subtaskRowVisible, taskRowVisible, visibilitySql } from '../services/recordVisibility.js'
+import { attachRecordImport } from './recordImport.js'
+import { attachRecordBulk } from './recordBulk.js'
 
 export const tasksRouter = Router()
 
 const WRITE = [
-  'kissflow_id', 'task_code', 'project_id', 'name', 'detail', 'status', 'workflow_status',
+  'task_code', 'project_id', 'name', 'detail', 'status', 'workflow_status',
   'priority', 'task_type', 'entity', 'application_name',
   'function_category', 'function_sub_category', 'function_type',
   'start_date', 'end_date', 'tat_days', 'aging_days',
@@ -33,7 +37,7 @@ function mapTask(row: Record<string, unknown>, extras: Record<string, unknown> =
 tasksRouter.get('/', async (req, res) => {
   const q = String(req.query.search || '').trim()
   let sql = `
-    SELECT t.*, p.name as project_name, p.kissflow_id as project_kissflow_id
+    SELECT t.*, p.name as project_name, p.project_code as project_code, p.kissflow_id as project_kissflow_id
     FROM tasks t
     LEFT JOIN projects p ON p.id = t.project_id
     WHERE t.deleted_at IS NULL
@@ -72,18 +76,21 @@ tasksRouter.get('/selectlist', async (req, res) => {
   return res.json({ results: await all(sql, params), pagination: { more: false } })
 })
 
+attachRecordImport(tasksRouter, 'task')
+attachRecordBulk(tasksRouter, 'task')
+
 tasksRouter.get('/:id', async (req, res) => {
   const key = String(req.params.id || '').trim()
   const row = /^\d+$/.test(key)
     ? await get<Record<string, unknown>>(`
-        SELECT t.*, p.name as project_name, p.kissflow_id as project_kissflow_id
+        SELECT t.*, p.name as project_name, p.project_code as project_code, p.kissflow_id as project_kissflow_id
         FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
         WHERE t.id = ? AND t.deleted_at IS NULL
       `, [key])
     : await get<Record<string, unknown>>(`
-        SELECT t.*, p.name as project_name, p.kissflow_id as project_kissflow_id
+        SELECT t.*, p.name as project_name, p.project_code as project_code, p.kissflow_id as project_kissflow_id
         FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-        WHERE t.deleted_at IS NULL AND (t.kissflow_id = ? OR t.task_code = ?)
+        WHERE t.deleted_at IS NULL AND (t.task_code = ? OR t.kissflow_id = ?)
         LIMIT 1
       `, [key, key])
   if (!row) return fail(res, 'Task not found', 404)
@@ -114,20 +121,23 @@ function writeVals(body: Record<string, unknown>) {
 }
 
 tasksRouter.post('/', async (req, res) => {
-  const b = req.body || {}
+  const b = await applyCreateDefaults('task', req.body || {}, req.user)
   if (!b.name) return fail(res, 'name is required')
   const meta = await resolveAssignmentMeta('task', b)
-  const { fields, vals } = writeVals({ ...b, ...meta.extra })
-  if (!fields.includes('name')) { fields.push('name'); vals.push(b.name) }
+  const prepared = await prepareCreateBody('task', { ...b, ...meta.extra }, 'local')
+  const { fields, vals } = writeVals(prepared)
+  if (!fields.includes('name')) { fields.push('name'); vals.push(prepared.name) }
   const ts = now()
+  stampCreateWrite(fields, vals, prepared, req.user?.id ?? null, ts)
   const cols = [...fields, 'created_by_user_id', 'created_at', 'updated_at']
   const info = await run(
     `INSERT INTO tasks (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
     [...vals, req.user?.id ?? null, ts, ts],
   )
   const id = Number(info.insertId)
-  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'task', itemId: id })
   const row = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ?`, [id])
+  await recordCreated({ itemType: 'task', itemId: id, user: req.user, row: row || prepared })
+  await logAction({ userId: req.user?.id, actionType: 'create', itemType: 'task', itemId: id })
   const mapped = mapTask(row || {})
   void resolvePersonEmail(val(mapped, 'assigned_to_name'), mapped.assigned_to_employee_id as number | null).then((email) => {
     notifyWorkflow({
@@ -190,11 +200,14 @@ tasksRouter.put('/:id', async (req, res) => {
     const mapped = mapTask(existing)
     return okMessage(res, 'No changes', req.user ? await attachEditPolicy(req.user, 'task', mapped) : mapped)
   }
+  const ts = now()
   const { fields, vals } = writeVals(filtered.body)
+  const life = lifecycleFields(existing, filtered.body.status, req.user.id, ts)
+  for (let i = 0; i < life.fields.length; i += 1) mergeWrite(fields, vals, life.fields[i], life.vals[i])
   if (!fields.length) return fail(res, 'No fields')
   await run(
     `UPDATE tasks SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_at = ? WHERE id = ?`,
-    [...vals, now(), id],
+    [...vals, ts, id],
   )
   const after = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ?`, [id])
   const changes = diffRecords(existing, after || {})
@@ -231,7 +244,9 @@ tasksRouter.delete('/:id', async (req, res) => {
     return fail(res, 'Task not found', 404)
   }
   const ts = now()
-  await run(`UPDATE tasks SET deleted_at = ?, updated_at = ? WHERE id = ?`, [ts, ts, id])
+  const existingRow = await get<Record<string, unknown>>(`SELECT * FROM tasks WHERE id = ?`, [id])
+  await run(`UPDATE tasks SET deleted_at = ?, deleted_by_user_id = ?, updated_by_user_id = ?, updated_at = ? WHERE id = ?`, [ts, req.user?.id ?? null, req.user?.id ?? null, ts, id])
+  await recordDeleted({ itemType: 'task', itemId: id, user: req.user, row: existingRow })
   await logAction({ userId: req.user?.id, actionType: 'delete', itemType: 'task', itemId: id })
   return okMessage(res, 'Task deleted')
 })

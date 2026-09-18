@@ -1,14 +1,14 @@
 import { Router } from 'express'
-import { fail, okItem, okList, okMessage } from '../utils/response.js'
+import { fail, okItem, okMessage } from '../utils/response.js'
 import { requirePerm } from '../services/permissions.js'
 import { notificationAdminSnapshot, saveNotificationConfig } from '../services/notificationConfig.js'
 import { run } from '../db/index.js'
 import { now } from '../db/index.js'
-import { getEmailLog, listEmailLogs } from '../services/emailLog.js'
+import { getEmailLog, listEmailLogs, listEmailLogTypes, updateEmailLog } from '../services/emailLog.js'
 import { brandedEmail } from '../services/notify.js'
 import { runOverdueAlerts } from '../services/overdueAlerts.js'
 import { sendMail } from '../services/mail.js'
-import { updateEmailLog } from '../services/emailLog.js'
+import { listActionLogs } from '../services/actionLog.js'
 
 export const notificationsRouter = Router()
 
@@ -45,9 +45,22 @@ notificationsRouter.get('/admin/email-logs', requirePerm('settings.view'), async
     search: String(req.query.search || ''),
     projectId: req.query.projectId ? Number(req.query.projectId) : undefined,
     page: Number(req.query.page) || 1,
-    limit: Number(req.query.limit) || 50,
+    limit: Number(req.query.limit) || 40,
   })
-  return okList(res, data.rows, data.total)
+  const types = await listEmailLogTypes()
+  return res.json({ total: data.total, rows: data.rows, types, page: data.page, limit: data.limit })
+})
+
+notificationsRouter.get('/admin/activity-logs', requirePerm('settings.view'), async (req, res) => {
+  const data = await listActionLogs({
+    action: String(req.query.action || req.query.actionType || ''),
+    itemType: String(req.query.itemType || req.query.item_type || ''),
+    userId: req.query.userId ? Number(req.query.userId) : undefined,
+    search: String(req.query.search || ''),
+    page: Number(req.query.page) || 1,
+    limit: Number(req.query.limit) || 40,
+  })
+  return res.json({ total: data.total, rows: data.rows, page: data.page, limit: data.limit })
 })
 
 notificationsRouter.post('/admin/email-logs/:id/retrigger', requirePerm('settings.edit'), async (req, res) => {

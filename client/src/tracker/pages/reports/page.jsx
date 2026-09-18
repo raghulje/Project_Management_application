@@ -10,8 +10,8 @@ import {
 } from '../../components/TableColumnHeaders.jsx'
 import { useContext, useEffect, useMemo, useState, useRef, useCallback, forwardRef } from 'react'
 import { ProjectTrackerEmbedContext } from '@/contexts/ProjectTrackerEmbedContext.jsx'
-import { KissflowSDKContext, kf } from '@/sdk/index.js'
-import { fetchProjectDashboardData } from '@/lib/kfProjectDashboard'
+import { fetchPmProjectBundle, scrollPmToElement } from '../../pmApi.js'
+import { useAuth } from '../../../api/AuthContext'
 import { motion } from 'framer-motion'
 import {
   Bar,
@@ -53,6 +53,49 @@ const ALL_PROJECTS_COLUMNS = [
   { key: 'delayDays', label: 'Delay' },
   { key: 'status', label: 'Status', filter: 'status' },
 ]
+
+const CUSTOMIZE_KEY = 'pm-reports-hidden-sections'
+const REPORT_SECTIONS = [
+  { key: 'filters', label: 'Portfolio filters' },
+  { key: 'kpis', label: 'KPI cards' },
+  { key: 'charts', label: 'Charts' },
+  { key: 'tables', label: 'Owner & department tables' },
+  { key: 'timeline', label: 'Timeline & delayed' },
+  { key: 'projects', label: 'All projects table' },
+]
+
+function readHidden() {
+  try {
+    const raw = localStorage.getItem(CUSTOMIZE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function exportCsv(filename, lines) {
+  const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function csvCell(value) {
+  const str = value == null ? '' : String(value)
+  if (/[",\n\r]/.test(str)) return `"${str.replace(/"/g, '""')}"`
+  return str
+}
+
+function inDateRange(value, from, to) {
+  if (!from && !to) return true
+  const raw = String(value || '').slice(0, 10)
+  if (!raw || raw === '—') return true
+  if (from && raw < from) return false
+  if (to && raw > to) return false
+  return true
+}
 
 const RAG_FILTER_OPTIONS = [
   { value: 'all', label: 'All RAG' },
@@ -185,11 +228,10 @@ function RagBadge({ rag }) {
 export default function ReportsPage({ useLayout = true }) {
   const { embed } = useContext(ProjectTrackerEmbedContext)
   const useChromeLayout = useLayout && !embed
-  const { kf: kfFromContext } = useContext(KissflowSDKContext)
-  const kfInstance =
-    kfFromContext ??
-    (typeof window !== 'undefined' ? window.kf : null) ??
-    (typeof kf !== 'undefined' ? kf : null)
+  const { user, isAdmin, isEmployee } = useAuth()
+  const lockedEntity = !isAdmin && isEmployee
+    ? String(user?.employee?.company || user?.company?.name || '').trim()
+    : ''
 
   const [apiRows, setApiRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -199,6 +241,12 @@ export default function ReportsPage({ useLayout = true }) {
   const [department, setDepartment] = useState('All Departments')
   const [owner, setOwner] = useState('All Owners')
   const [entityFocus, setEntityFocus] = useState('All')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [updatedAt, setUpdatedAt] = useState(null)
+  const [hidden, setHidden] = useState(readHidden)
+  const [customizeOpen, setCustomizeOpen] = useState(false)
+  const customizeRef = useRef(null)
   const [tablePage, setTablePage] = useState(1)
   const [ragFocus, setRagFocus] = useState('all')
   const [delayOnly, setDelayOnly] = useState(false)
@@ -221,25 +269,15 @@ export default function ReportsPage({ useLayout = true }) {
 
   useEffect(() => {
     let cancelled = false
-    let retryTimer = null
-    const run = async (attempt = 0) => {
+    const run = async () => {
       try {
-        const liveKf =
-          kfInstance ??
-          (typeof window !== 'undefined' ? window.kf : null) ??
-          (typeof kf !== 'undefined' ? kf : null)
-        if (!liveKf?.api && attempt < 6) {
-          retryTimer = setTimeout(() => {
-            if (!cancelled) run(attempt + 1)
-          }, 700)
-          return
-        }
         setLoading(true)
         setFetchError('')
-        const { rows } = await fetchProjectDashboardData(liveKf)
+        const { rows } = await fetchPmProjectBundle()
         if (!cancelled) {
           setApiRows(rows || [])
-          if (!rows || rows.length === 0) setFetchError('No rows returned from API')
+          setUpdatedAt(new Date())
+          if (!rows || rows.length === 0) setFetchError('No projects in the portfolio yet')
         }
       } catch (error) {
         if (!cancelled) {
@@ -251,21 +289,34 @@ export default function ReportsPage({ useLayout = true }) {
       }
     }
     run()
-    return () => {
-      cancelled = true
-      if (retryTimer) clearTimeout(retryTimer)
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    try { localStorage.setItem(CUSTOMIZE_KEY, JSON.stringify(hidden)) } catch { /* ignore */ }
+  }, [hidden])
+
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (!customizeRef.current?.contains(e.target)) setCustomizeOpen(false)
     }
-  }, [kfInstance])
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
 
   const PROJECTS = useMemo(
     () =>
       (apiRows || []).map((row) => ({
         id: row.displayId || row.id,
         name: row.name,
-        entity: row.entity && row.entity !== 'N/A' ? row.entity : row.lineOfBusiness || 'Unspecified',
+        entity:
+          (row.companyName && row.companyName !== 'N/A' ? row.companyName : '')
+          || (row.entity && row.entity !== 'N/A' ? row.entity : '')
+          || row.lineOfBusiness
+          || 'Unspecified',
         department:
           row.department && row.department !== 'N/A' ? row.department : row.lineOfBusiness || 'Unspecified',
-        owner: row.owner || 'Unassigned',
+        owner: row.owner || row.projectOwner || 'Unassigned',
         ownerAvatar: row.ownerAvatar || 'NA',
         rag: normalizeRag(row.rag),
         progress: Number(row.progress || 0),
@@ -276,9 +327,18 @@ export default function ReportsPage({ useLayout = true }) {
         start: row.startDate || '—',
         end: row.originalEndDate || '—',
         revisedEnd: row.revisedEndDate || row.originalEndDate || '—',
+        createdAt: row.createdAt || row.startDate || '',
       })),
     [apiRows],
   )
+
+  useEffect(() => {
+    if (!lockedEntity) return
+    const match = PROJECTS.find((p) => p.entity === lockedEntity)
+      || PROJECTS.find((p) => String(p.entity).toLowerCase().includes(lockedEntity.toLowerCase())
+        || lockedEntity.toLowerCase().includes(String(p.entity).toLowerCase()))
+    if (match) setEntity(match.entity)
+  }, [lockedEntity, PROJECTS])
 
   const filteredProjects = useMemo(() => {
     return PROJECTS.filter((p) => {
@@ -287,9 +347,10 @@ export default function ReportsPage({ useLayout = true }) {
       if (owner !== 'All Owners' && p.owner !== owner) return false
       if (entityFocus !== 'All' && p.entity !== entityFocus) return false
       if (search && !`${p.name} ${p.owner} ${p.id}`.toLowerCase().includes(search.toLowerCase())) return false
+      if (!inDateRange(p.createdAt || p.start, dateFrom, dateTo)) return false
       return true
     })
-  }, [PROJECTS, entity, department, owner, entityFocus, search])
+  }, [PROJECTS, entity, department, owner, entityFocus, search, dateFrom, dateTo])
 
   const tableProjectsBase = useMemo(() => {
     return filteredProjects.filter((p) => {
@@ -341,8 +402,7 @@ export default function ReportsPage({ useLayout = true }) {
       requestAnimationFrame(() => {
         const el = tableSectionRef.current
         if (!el) return
-        const top = el.getBoundingClientRect().top + window.scrollY - 24
-        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+        scrollPmToElement(el, 24)
       })
     })
     if (insightPulseTimerRef.current) clearTimeout(insightPulseTimerRef.current)
@@ -628,6 +688,24 @@ export default function ReportsPage({ useLayout = true }) {
 
   const ragPct = (n) => (total ? round((n / total) * 100) : 0)
 
+  const handleExport = () => {
+    const stamp = new Date().toISOString().slice(0, 10)
+    const lines = [
+      ['KPI', 'Value'].map(csvCell).join(','),
+      ['Total projects', total].map(csvCell).join(','),
+      ['On track', onTrack].map(csvCell).join(','),
+      ['At risk', atRisk].map(csvCell).join(','),
+      ['Critical', critical].map(csvCell).join(','),
+      ['Delayed', delayedRows.length].map(csvCell).join(','),
+      '',
+      ['Project', 'Entity', 'Department', 'Owner', 'RAG', 'Progress', 'Delay days', 'Status', 'Start', 'End'].map(csvCell).join(','),
+      ...tableProjects.map((p) => [p.name, p.entity, p.department, p.owner, p.rag, p.progress, p.delayDays, p.status, p.start, p.end].map(csvCell).join(',')),
+    ]
+    exportCsv(`pm-reports-${stamp}.csv`, lines)
+  }
+
+  const shown = (key) => !hidden[key]
+
   const content = (
     <div className="min-h-screen bg-gradient-to-b from-[#edf1ff] via-[#f6f8ff] to-[#f2ecff]">
       <div className="mx-auto max-w-[1800px] space-y-3 p-2 pb-6 sm:space-y-5 sm:p-6">
@@ -635,7 +713,7 @@ export default function ReportsPage({ useLayout = true }) {
           <div className="rounded-2xl border border-slate-200/80 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm">
             <span className="inline-flex items-center gap-2">
               <i className="ri-loader-4-line animate-spin text-[#1E88E5]" aria-hidden />
-              Loading analytics from Kissflow…
+              Loading analytics…
             </span>
           </div>
         ) : null}
@@ -662,6 +740,7 @@ export default function ReportsPage({ useLayout = true }) {
               </h1>
               <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                 {total} projects in view · click entity bars to filter
+                {updatedAt ? ` · updated ${updatedAt.toLocaleTimeString()}` : ''}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -669,17 +748,46 @@ export default function ReportsPage({ useLayout = true }) {
                 <i className="ri-calendar-line text-[#1E88E5]" aria-hidden />
                 {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Live API
-              </span>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-blue-50"
+              >
+                <i className="ri-download-2-line text-[#1E88E5]" aria-hidden />
+                Export CSV
+              </button>
+              <div className="relative" ref={customizeRef}>
+                <button
+                  type="button"
+                  onClick={() => setCustomizeOpen((v) => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-blue-50"
+                >
+                  <i className="ri-settings-3-line text-[#1E88E5]" aria-hidden />
+                  Customize
+                </button>
+                {customizeOpen ? (
+                  <div className="absolute right-0 z-40 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                    {REPORT_SECTIONS.map((s) => (
+                      <label key={s.key} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          checked={!hidden[s.key]}
+                          onChange={() => setHidden((prev) => ({ ...prev, [s.key]: !prev[s.key] }))}
+                        />
+                        {s.label}
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </motion.header>
 
+        {shown('filters') ? (
         <SectionCard>
-          <SectionHead title="Portfolio filters" subtitle="Narrow the analytics by entity, department, or owner" />
-          <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-4">
+          <SectionHead title="Portfolio filters" subtitle="Narrow the analytics by entity, department, owner, or date" />
+          <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-6">
             <label className="space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Entity</span>
               <PtSelect
@@ -687,6 +795,7 @@ export default function ReportsPage({ useLayout = true }) {
                 onChange={(e) => setEntity(e.target.value)}
                 className="w-full"
                 aria-label="Filter by entity"
+                disabled={Boolean(lockedEntity)}
                 options={entities.map((x) => ({ value: x, label: x }))}
               />
             </label>
@@ -708,6 +817,24 @@ export default function ReportsPage({ useLayout = true }) {
                 className="w-full"
                 aria-label="Filter by owner"
                 options={owners.map((x) => ({ value: x, label: x }))}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">From</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm outline-none focus:border-[#1E88E5] focus:ring-2 focus:ring-[#1E88E5]/15"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">To</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm outline-none focus:border-[#1E88E5] focus:ring-2 focus:ring-[#1E88E5]/15"
               />
             </label>
             <label className="space-y-1">
@@ -736,7 +863,9 @@ export default function ReportsPage({ useLayout = true }) {
             </div>
           ) : null}
         </SectionCard>
+        ) : null}
 
+        {shown('kpis') ? (
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-5">
           <KpiCard
             index={0}
@@ -789,7 +918,9 @@ export default function ReportsPage({ useLayout = true }) {
             onClick={() => handleKpiClick('delayed')}
           />
         </div>
+        ) : null}
 
+        {shown('charts') ? (
         <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-3">
           <div className="space-y-4 xl:col-span-2">
             <SectionCard>
@@ -941,7 +1072,9 @@ export default function ReportsPage({ useLayout = true }) {
             </SectionCard>
           </div>
         </div>
+        ) : null}
 
+        {shown('tables') ? (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <SectionCard>
             <SectionHead
@@ -1059,7 +1192,10 @@ export default function ReportsPage({ useLayout = true }) {
             </div>
           </SectionCard>
         </div>
+        ) : null}
 
+        {shown('timeline') ? (
+        <>
         <SectionCard>
           <SectionHead title="Project Timeline" subtitle="Top 10 by delay · progress bars" />
           <div className="space-y-2.5 p-3 sm:p-4">
@@ -1122,7 +1258,10 @@ export default function ReportsPage({ useLayout = true }) {
             )}
           </div>
         </SectionCard>
+        </>
+        ) : null}
 
+        {shown('projects') ? (
         <SectionCard
           ref={tableSectionRef}
           className={`transition-[box-shadow,ring] duration-500 ${
@@ -1188,6 +1327,7 @@ export default function ReportsPage({ useLayout = true }) {
           </div>
           <TablePaginationBar total={tableProjects.length} page={safeTablePage} onPageChange={setTablePage} />
         </SectionCard>
+        ) : null}
       </div>
     </div>
   )

@@ -13,6 +13,23 @@ type User = {
   roles?: string[]
   groups?: string[]
   role?: string
+  company?: { id?: number; name?: string | null } | null
+  department?: { id?: number; name?: string | null } | null
+  location?: { id?: number; name?: string | null } | null
+  employee?: {
+    id?: number
+    code?: string
+    name?: string
+    email?: string
+    company?: string
+    entity?: string
+    department?: string
+    location?: string
+    designation?: string
+    business_line?: string
+    l1_name?: string
+    l1_email?: string
+  } | null
 }
 
 type AuthCtx = {

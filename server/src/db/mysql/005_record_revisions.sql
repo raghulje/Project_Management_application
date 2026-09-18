@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS `record_revisions` (
   `revision_no` INT UNSIGNED NOT NULL,
   `user_id` INT UNSIGNED NULL,
   `user_name` VARCHAR(191) NULL,
+  `action` VARCHAR(32) NOT NULL DEFAULT 'update',
+  `reason` TEXT NULL,
   `changes_json` JSON NOT NULL,
   `created_at` DATETIME NOT NULL,
   PRIMARY KEY (`id`),

@@ -252,8 +252,8 @@ export async function buildPortfolio() {
     const projectKissflowId = str(t.project_kissflow_id)
     const projectCode = str(t.project_code)
     const projectName = str(t.project_name, '—')
-    const taskBusinessId = str(t.task_code) || str(t.kissflow_id) || `TASK-${idx + 1}`
-    const instanceKey = str(t.kissflow_id) || taskBusinessId
+    const taskBusinessId = str(t.task_code) || (t.id != null ? `TSK-${t.id}` : '') || str(t.kissflow_id) || `TSK-${idx + 1}`
+    const instanceKey = taskBusinessId || str(t.kissflow_id)
     const startDate = fmtDate(start)
     const endDate = fmtDate(end)
     const row = {
@@ -293,7 +293,7 @@ export async function buildPortfolio() {
       revisedCount: revCount('task', t.id),
       hasRevision: revCount('task', t.id) > 0,
       revisionHistory: revHistory('task', t.id),
-      createdAt: fmtDate(t.kissflow_created_at || t.created_at),
+      createdAt: fmtDate(t.created_at || t.kissflow_created_at),
       agingDays: aging,
       delayDays,
       status,
@@ -321,7 +321,7 @@ export async function buildPortfolio() {
   })
 
   const mappedProjects = projects.map((p, index) => {
-    const id = str(p.kissflow_id) || str(p.project_code) || `PRJ-${index + 1}`
+    const id = str(p.project_code) || str(p.kissflow_id) || `PRJ-${p.id || index + 1}`
     const displayId = str(p.project_code) || id
     const status = str(p.status, 'Open')
     const ownerName = str(p.project_owner_name, 'Unassigned')
@@ -430,8 +430,8 @@ export async function buildPortfolio() {
       processDocAvailable: Boolean(p.process_document),
       supportAvailable: Boolean(p.support_available),
       cbAnalysisAvailable: Boolean(p.cb_analysis_available),
-      createdAt: fmtDate(p.kissflow_created_at || p.created_at),
-      modifiedAt: fmtDate(p.kissflow_modified_at || p.updated_at),
+      createdAt: fmtDate(p.created_at || p.kissflow_created_at),
+      modifiedAt: fmtDate(p.updated_at || p.kissflow_modified_at),
       createdBy: str(p.requester_name),
       createdById: '',
       createdByEmail: people.emailFor(p.requester_employee_id, p.requester_name),
@@ -453,7 +453,7 @@ export async function buildPortfolio() {
     const displayName = str(s.name, 'Untitled subtask')
     const assignee = str(s.assigned_to_name, '—')
     const parentId = str(s.parent_task_code) || str(s.parent_task_kissflow_id)
-    const id = str(s.kissflow_id) || `SUB-${s.id || idx + 1}`
+    const id = str(s.subtask_code) || (s.id != null ? `SUB-${s.id}` : str(s.kissflow_id)) || `SUB-${idx + 1}`
     return {
       id,
       dbId: Number(s.id) || null,

@@ -42,7 +42,8 @@ import {
   filterTasksByManagerEmail,
   filterTasksByAllowedProjects,
 } from './lib/kfMyTeamTasks.js';
-import { fetchPmPortfolio, goPm, goPmNewProject, goPmNewSubtask, goPmNewTask, openPmRecord, scrollPmToElement, syncPmFromKissflow } from './pmApi.js';
+import { fetchPmPortfolio, goPm, goPmNewProject, goPmNewSubtask, goPmNewTask, openPmRecord, scrollPmToElement } from './pmApi.js';
+import HubBulkBar, { isFinishedStatus, openRowsOf, rowSelectKey } from './components/HubBulkBar.jsx';
 import { collectProjectExportRows, exportProjectAccordion } from './lib/exportProjectAccordion.js';
 import { compareCreatedAt, sortByCreatedAtDesc } from './lib/dashboardCreatedDateFilters.js';
 
@@ -2479,6 +2480,7 @@ function formatProjectRef(displayId, rowId) {
 }
 
 function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopup, onOpenSubtaskPopup, onOpenProjectPopup, onCreateTaskPopup, onCreateSubtask, onRefreshTasks, refreshingTasks, insightFilter = null, headerActions = null }) {
+  const [projectSelected, setProjectSelected] = useState(() => new Set());
   const [ragFilter, setRagFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [ownerFilter, setOwnerFilter] = useState('all');
@@ -2613,6 +2615,10 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageRows = sortedFiltered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageOpenProjects = openRowsOf(pageRows);
+  const pageOpenProjectIds = pageOpenProjects.map(rowSelectKey).filter(Boolean);
+  const allPageProjectsSelected = pageOpenProjectIds.length > 0
+    && pageOpenProjectIds.every((id) => projectSelected.has(id));
 
   useEffect(() => {
     setPage(1);
@@ -2897,10 +2903,38 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
         </MobileFilterField>
       </MobileFilterSheet>
 
+      <div className="px-3 pb-0 sm:px-5">
+        <HubBulkBar
+          kind="project"
+          pageRows={pageRows}
+          allRows={sortedFiltered}
+          selected={projectSelected}
+          onSelected={setProjectSelected}
+          onChanged={onRefreshTasks}
+        />
+      </div>
+
       <div className="hidden overflow-x-auto lg:block">
         <table className="w-full">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/70">
+              <th className="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  aria-label="Select open projects on this page"
+                  checked={allPageProjectsSelected}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setProjectSelected((prev) => {
+                      const next = new Set(prev);
+                      if (checked) pageOpenProjectIds.forEach((id) => next.add(id));
+                      else pageOpenProjectIds.forEach((id) => next.delete(id));
+                      return next;
+                    });
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
+                />
+              </th>
               {COLUMN_META.map((col) => {
                 const filterCfg = col.filter ? columnFilterProps[col.filter] : null;
                 return (
@@ -2921,7 +2955,7 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-5 py-12 text-center">
+                <td colSpan={9} className="px-5 py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <i className="ri-inbox-line text-3xl text-gray-300" />
                     <p className="text-sm text-[#7F8C8D]">No projects found</p>
@@ -2944,6 +2978,25 @@ function ProjectHealthTable({ data, allTasks, allProcessSubtasks, onOpenTaskPopu
                       className={`border-b border-slate-100 transition-all duration-150 ${rowBg(row.rag)} ${open ? 'bg-slate-50/70' : ''}`}
                       style={{ height: '56px' }}
                     >
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={isFinishedStatus(row.status) ? 'Already closed' : `Select ${row.name || 'project'}`}
+                      disabled={isFinishedStatus(row.status)}
+                      checked={projectSelected.has(rowSelectKey(row))}
+                      onChange={() => {
+                        if (isFinishedStatus(row.status)) return;
+                        const id = rowSelectKey(row);
+                        setProjectSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(id)) next.delete(id);
+                          else next.add(id);
+                          return next;
+                        });
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0] disabled:cursor-not-allowed disabled:opacity-40"
+                    />
+                  </td>
                   <td className="px-5 py-3">
                     <div className="flex items-start gap-2">
                       <button
@@ -4063,12 +4116,13 @@ function SubtaskTable({
   onRefresh,
   refreshing = false,
   insightFilter = null,
-  bulkSelectEnabled = false,
+  bulkSelectEnabled = true,
   selectedRowIds = null,
   onToggleRowSelect,
   onToggleAllRowsSelect,
   getRowSelectId,
 }) {
+  const [localSelected, setLocalSelected] = useState(() => new Set());
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
@@ -4252,10 +4306,39 @@ function SubtaskTable({
   ].filter((col) => !(hideProjectFilter && col.filter === 'project'));
 
   const taskTableColSpan = TASK_TRACKER_COLUMNS.length + (bulkSelectEnabled ? 1 : 0);
-  const resolveSelectId = getRowSelectId || ((row) => String(row?.id || row?.InstanceID || '').trim());
-  const pageRowIds = pageRows.map((row) => resolveSelectId(row)).filter(Boolean);
-  const allPageSelected = bulkSelectEnabled && pageRowIds.length > 0
-    && pageRowIds.every((id) => selectedRowIds?.has?.(id));
+  const resolveSelectId = getRowSelectId || ((row) => rowSelectKey(row));
+  const selectedIds = selectedRowIds instanceof Set ? selectedRowIds : localSelected;
+  const pageOpenRows = openRowsOf(pageRows);
+  const pageOpenIds = pageOpenRows.map((row) => resolveSelectId(row)).filter(Boolean);
+  const allPageSelected = bulkSelectEnabled && pageOpenIds.length > 0
+    && pageOpenIds.every((id) => selectedIds.has(id));
+
+  function toggleRowSelect(id, row) {
+    if (!id || isFinishedStatus(row?.status)) return;
+    if (typeof onToggleRowSelect === 'function') {
+      onToggleRowSelect(id, row);
+      return;
+    }
+    setLocalSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePageSelect(checked) {
+    if (typeof onToggleAllRowsSelect === 'function') {
+      onToggleAllRowsSelect(checked, pageOpenIds);
+      return;
+    }
+    setLocalSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) pageOpenIds.forEach((id) => next.add(id));
+      else pageOpenIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  }
 
   const [taskSheetOpen, setTaskSheetOpen] = useState(false);
   const [draftStatus, setDraftStatus] = useState(statusFilter);
@@ -4451,6 +4534,19 @@ function SubtaskTable({
         </MobileFilterField>
       </MobileFilterSheet>
 
+      {bulkSelectEnabled ? (
+        <div className="px-3 pb-0 sm:px-5">
+          <HubBulkBar
+            kind="task"
+            pageRows={pageRows}
+            allRows={sortedFiltered}
+            selected={selectedIds}
+            onSelected={setLocalSelected}
+            onChanged={onRefresh}
+          />
+        </div>
+      ) : null}
+
       <div className="hidden overflow-x-auto lg:block">
         <table className="w-full">
           <thead>
@@ -4459,9 +4555,9 @@ function SubtaskTable({
                 <th className={`w-10 ${compact ? 'px-3 py-2.5' : 'px-4 py-3'}`}>
                   <input
                     type="checkbox"
-                    aria-label="Select all tasks on this page"
+                    aria-label="Select open tasks on this page"
                     checked={allPageSelected}
-                    onChange={(e) => onToggleAllRowsSelect?.(e.target.checked, pageRowIds)}
+                    onChange={(e) => togglePageSelect(e.target.checked)}
                     className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
                   />
                 </th>
@@ -4515,10 +4611,11 @@ function SubtaskTable({
                     <td className={compact ? 'px-3 py-2.5' : 'px-4 py-3'} onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        aria-label={`Select task ${row.taskName || ''}`}
-                        checked={selectedRowIds?.has?.(resolveSelectId(row)) ?? false}
-                        onChange={() => onToggleRowSelect?.(resolveSelectId(row), row)}
-                        className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
+                        aria-label={isFinishedStatus(row.status) ? 'Already closed' : `Select ${row.taskName || 'task'}`}
+                        disabled={isFinishedStatus(row.status)}
+                        checked={selectedIds.has(resolveSelectId(row))}
+                        onChange={() => toggleRowSelect(resolveSelectId(row), row)}
+                        className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0] disabled:cursor-not-allowed disabled:opacity-40"
                       />
                     </td>
                   ) : null}
@@ -4655,6 +4752,18 @@ function SubtaskTable({
             key={row.id}
             className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
           >
+          {bulkSelectEnabled ? (
+            <div className="flex items-start gap-2 px-3 pt-3">
+              <input
+                type="checkbox"
+                aria-label={isFinishedStatus(row.status) ? 'Already closed' : `Select ${row.taskName || 'task'}`}
+                disabled={isFinishedStatus(row.status)}
+                checked={selectedIds.has(resolveSelectId(row))}
+                onChange={() => toggleRowSelect(resolveSelectId(row), row)}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0] disabled:cursor-not-allowed disabled:opacity-40"
+              />
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -5506,7 +5615,6 @@ function DashboardPagePremium({
   const [apiSubtaskData, setApiSubtaskData] = useState([]);
   const [apiProcessSubtaskData, setApiProcessSubtaskData] = useState([]);
   const [refreshingTasks, setRefreshingTasks] = useState(false);
-  const [kissflowSync, setKissflowSync] = useState({ status: 'idle', message: '' });
   /** User dashboard only: Me = my work, My Team = manager report (same as UserSpecificPT). */
   const [userViewScope, setUserViewScope] = useState('Me');
   const [selectedTeamMember, setSelectedTeamMember] = useState('');
@@ -5564,8 +5672,7 @@ function DashboardPagePremium({
     if (typeof onOpenTaskRow === 'function' && onOpenTaskRow(row, kfInstance) !== false) {
       return true;
     }
-    setDetailModal({ type: 'task', row });
-    return true;
+    return openPmRecord('task', row);
   }, [onOpenTaskRow, kfInstance]);
 
   const handleOpenSubtaskDetail = useCallback((row) => {
@@ -5573,8 +5680,7 @@ function DashboardPagePremium({
     if (typeof onOpenSubtaskRow === 'function' && onOpenSubtaskRow(row, kfInstance) !== false) {
       return true;
     }
-    setDetailModal({ type: 'subtask', row });
-    return true;
+    return openPmRecord('subtask', row);
   }, [onOpenSubtaskRow, kfInstance]);
 
   const handleOpenProjectDetail = useCallback((row) => {
@@ -5582,13 +5688,12 @@ function DashboardPagePremium({
     if (typeof onOpenProjectRow === 'function' && onOpenProjectRow(row, kfInstance) !== false) {
       return true;
     }
-    setDetailModal({ type: 'project', row });
-    return true;
+    return openPmRecord('project', row);
   }, [onOpenProjectRow, kfInstance]);
 
   const handleOpenDelayDetail = useCallback((row) => {
     if (!row) return;
-    setDetailModal({ type: 'project', row });
+    openPmRecord('project', row);
   }, []);
 
   const handleCloseDetailModal = useCallback(() => {
@@ -5606,6 +5711,12 @@ function DashboardPagePremium({
     } finally {
       setRefreshingTasks(false);
     }
+  }, [reloadDashboardData]);
+
+  useEffect(() => {
+    const onChanged = () => { void reloadDashboardData(); };
+    window.addEventListener('pm-records-changed', onChanged);
+    return () => window.removeEventListener('pm-records-changed', onChanged);
   }, [reloadDashboardData]);
 
   const handleCreateTaskForProject = useCallback(
@@ -5715,33 +5826,10 @@ function DashboardPagePremium({
           setApiProcessSubtaskData([]);
         }
       }
-      if (cancelled || lightHubTasksMode) return;
-      setKissflowSync({ status: 'running', message: 'Syncing latest projects, tasks and subtasks…' });
-      try {
-        const result = await syncPmFromKissflow();
-        if (cancelled) return;
-        const payload = result?.payload || {};
-        const source = payload.source || 'Kissflow';
-        setKissflowSync({
-          status: 'done',
-          message: `Updated from ${source}: ${payload.projects ?? 0} projects, ${payload.tasks ?? 0} tasks, ${payload.subtasks ?? 0} subtasks`,
-        });
-        await reloadDashboardData();
-        window.setTimeout(() => {
-          if (!cancelled) setKissflowSync((prev) => (prev.status === 'done' ? { status: 'idle', message: '' } : prev));
-        }, 6000);
-      } catch (error) {
-        if (cancelled) return;
-        console.warn('Kissflow production sync failed:', error?.message || error);
-        setKissflowSync({
-          status: 'error',
-          message: error?.message || 'Could not sync latest Kissflow records',
-        });
-      }
     }
     run();
     return () => { cancelled = true; };
-  }, [reloadDashboardData, lightHubTasksMode]);
+  }, [reloadDashboardData]);
 
   // User dashboard → My Team projects (same report as UserSpecificPT).
   useEffect(() => {
@@ -6242,13 +6330,13 @@ function DashboardPagePremium({
     trendDelayedProjects: `${Math.round((delayedProjects / Math.max(totalProjects, 1)) * 100)}% at risk`,
   };
   const content = (
-    <div className={embeddedInHub ? 'min-w-0 overflow-x-clip' : 'overflow-x-clip bg-gradient-to-b from-[#edf1ff] via-[#f6f8ff] to-[#f2ecff]'}>
+    <div className={embeddedInHub ? 'min-w-0 overflow-x-clip' : 'overflow-x-clip'}>
       <div className={embeddedInHub ? 'min-w-0' : 'px-3 pt-1.5 pb-6 sm:px-6 sm:pt-3 sm:pb-6'}>
         {!hideWelcomeHeader ? (
         <motion.header
           ref={headerRef}
           data-dashboard-header
-          className="sticky top-0 z-30 -mx-3 mb-3 border-b border-white/50 bg-gradient-to-b from-[#edf1ff]/92 to-[#eef2ff]/88 px-3 pb-2.5 pt-2 shadow-[0_8px_30px_-18px_rgba(30,41,59,0.2)] backdrop-blur-md sm:-mx-6 sm:mb-5 sm:px-6 sm:pb-4 sm:pt-3"
+          className="sticky top-0 z-30 -mx-3 mb-3 border-b border-slate-200/70 bg-white/92 px-3 pb-2.5 pt-2 shadow-[0_8px_30px_-18px_rgba(30,41,59,0.18)] backdrop-blur-md sm:-mx-6 sm:mb-5 sm:px-6 sm:pb-4 sm:pt-3"
           initial={{ opacity: 0, y: isDesktopLg ? -12 : -4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={
@@ -6456,30 +6544,6 @@ function DashboardPagePremium({
           </div>
         )}
 
-        {kissflowSync.status !== 'idle' && kissflowSync.message ? (
-          <div
-            className={`mb-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold sm:text-xs ${
-              kissflowSync.status === 'error'
-                ? 'border-rose-200 bg-rose-50 text-rose-700'
-                : kissflowSync.status === 'done'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : 'border-slate-200 bg-white text-slate-600'
-            }`}
-          >
-            <i
-              className={
-                kissflowSync.status === 'running'
-                  ? 'ri-loader-4-line animate-spin'
-                  : kissflowSync.status === 'error'
-                    ? 'ri-error-warning-line'
-                    : 'ri-checkbox-circle-line'
-              }
-              aria-hidden
-            />
-            {kissflowSync.message}
-          </div>
-        ) : null}
-
         <div className="space-y-4 lg:space-y-6">
           {(contentView === 'all' || contentView === 'projects') && (
           <motion.section
@@ -6600,14 +6664,24 @@ function DashboardPagePremium({
                   : null
               }
               headerActions={
-                <button
-                  type="button"
-                  onClick={() => (typeof onCreateProjectRecord === 'function' ? onCreateProjectRecord() : goPmNewProject())}
-                  className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
-                >
-                  <i className="ri-add-line" aria-hidden />
-                  Create project
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => goPm('/projects/import')}
+                    className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-xs"
+                  >
+                    <i className="ri-file-excel-2-line" aria-hidden />
+                    Import
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => (typeof onCreateProjectRecord === 'function' ? onCreateProjectRecord() : goPmNewProject())}
+                    className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
+                  >
+                    <i className="ri-add-line" aria-hidden />
+                    Create project
+                  </button>
+                </>
               }
             />
           </motion.section>
@@ -6646,21 +6720,28 @@ function DashboardPagePremium({
                     nestedMode
                     allProcessSubtasks={nestedProcessSubtasksForTable}
                     onCreateSubtask={handleCreateSubtaskForTask}
-                    bulkSelectEnabled={taskBulkSelectEnabled}
-                    selectedRowIds={taskSelectedRowIds}
-                    onToggleRowSelect={onTaskToggleRowSelect}
-                    onToggleAllRowsSelect={onTaskToggleAllRowsSelect}
-                    getRowSelectId={getTaskRowSelectId}
+                    bulkSelectEnabled
+                    onRefresh={handleRefreshTasks}
                     hideTaskIds={overrideTasks != null}
                     headerActions={
-                      <button
-                        type="button"
-                        onClick={() => (typeof onCreateTaskRecord === 'function' ? onCreateTaskRecord() : goPm('/tasks/new'))}
-                        className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
-                      >
-                        <i className="ri-add-line" aria-hidden />
-                        Create task
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => goPm('/tasks/import')}
+                          className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:text-xs"
+                        >
+                          <i className="ri-file-excel-2-line" aria-hidden />
+                          Import
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => (typeof onCreateTaskRecord === 'function' ? onCreateTaskRecord() : goPm('/tasks/new'))}
+                          className="shrink-0 snap-start inline-flex items-center gap-2 rounded-2xl bg-[#1E88E5] px-3 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:opacity-95 sm:text-xs"
+                        >
+                          <i className="ri-add-line" aria-hidden />
+                          Create task
+                        </button>
+                      </>
                     }
                     insightFilter={
                       insightFocus?.section === 'subtasks'

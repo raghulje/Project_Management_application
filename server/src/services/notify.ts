@@ -185,20 +185,29 @@ export function notifyWorkflow(input: WorkflowNotifyInput) {
 }
 
 export async function resolvePersonEmail(nameOrEmail?: string | null, employeeId?: number | null): Promise<string | null> {
-  if (employeeId) {
-    const row = await get<{ email?: string | null }>(`SELECT email FROM employees WHERE id = ? AND deleted_at IS NULL`, [employeeId])
-    const e = String(row?.email || '').trim()
-    if (e.includes('@')) return e
-  }
-  const raw = String(nameOrEmail || '').trim()
-  if (raw.includes('@')) return raw
-  if (raw) {
-    const row = await get<{ email?: string | null }>(
-      `SELECT email FROM employees WHERE deleted_at IS NULL AND (name = ? OR email = ?) LIMIT 1`,
-      [raw, raw],
-    )
-    const e = String(row?.email || '').trim()
-    if (e.includes('@')) return e
+  try {
+    if (employeeId) {
+      const row = await get<{ email?: string | null }>(`SELECT email FROM employees WHERE id = ? AND deleted_at IS NULL`, [employeeId])
+      const e = String(row?.email || '').trim()
+      if (e.includes('@')) return e
+    }
+    const raw = String(nameOrEmail || '').trim()
+    if (raw.includes('@')) return raw
+    if (raw) {
+      const row = await get<{ email?: string | null }>(
+        `SELECT email FROM employees
+         WHERE deleted_at IS NULL AND (
+           TRIM(CONCAT(IFNULL(first_name,''),' ',IFNULL(last_name,''))) = ?
+           OR email = ?
+         )
+         LIMIT 1`,
+        [raw, raw],
+      )
+      const e = String(row?.email || '').trim()
+      if (e.includes('@')) return e
+    }
+  } catch (e) {
+    console.warn('[notify] person email lookup failed', e instanceof Error ? e.message : e)
   }
   return null
 }

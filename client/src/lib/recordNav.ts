@@ -46,13 +46,11 @@ function inheritedStack(prev: NavState, now: string): string[] {
 
 export function originLabel(path: string, fallback = 'Back') {
   const p = pathOnly(path)
+  if (p.startsWith('/dashboard/my-work')) return 'My work'
   if (p === '/' || p.startsWith('/dashboard')) return 'Dashboard'
-  if (p.startsWith('/hub/projects')) return 'My projects'
-  if (p.startsWith('/hub/tasks')) return 'My tasks'
-  if (p.startsWith('/hub/subtasks')) return 'My subtasks'
-  if (p === '/projects' || p === '/projects/') return 'All projects'
-  if (p === '/tasks' || p === '/tasks/') return 'All tasks'
-  if (p === '/subtasks' || p === '/subtasks/') return 'All subtasks'
+  if (p.startsWith('/hub/projects') || p === '/projects' || p === '/projects/') return 'Projects'
+  if (p.startsWith('/hub/tasks') || p === '/tasks' || p === '/tasks/') return 'Tasks'
+  if (p.startsWith('/hub/subtasks') || p === '/subtasks' || p === '/subtasks/') return 'Subtasks'
   if (p.startsWith('/board')) return 'Board'
   if (/^\/projects\/[^/]+/.test(p)) return 'Project'
   if (/^\/tasks\/[^/]+/.test(p)) return 'Task'
@@ -60,10 +58,10 @@ export function originLabel(path: string, fallback = 'Back') {
   return fallback
 }
 
-export function defaultList(kind: 'project' | 'task' | 'subtask', isEmployee: boolean) {
-  if (kind === 'project') return isEmployee ? '/hub/projects' : '/projects'
-  if (kind === 'task') return isEmployee ? '/hub/tasks' : '/tasks'
-  return isEmployee ? '/hub/subtasks' : '/subtasks'
+export function defaultList(kind: 'project' | 'task' | 'subtask', _isEmployee?: boolean) {
+  if (kind === 'project') return '/projects'
+  if (kind === 'task') return '/tasks'
+  return '/subtasks'
 }
 
 /** State to pass when opening a child from the current page. */

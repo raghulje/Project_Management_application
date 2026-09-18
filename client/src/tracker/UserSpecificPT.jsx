@@ -534,6 +534,9 @@ function mapTaskForUserSpecificPT(t) {
     return {
     id: String(t?.taskId || t?.id || '').trim(),
     taskId: String(t?.taskId || t?.id || '').trim(),
+    dbId: t?.dbId ?? t?.mysqlId ?? t?.recordId ?? null,
+    recordId: t?.recordId ?? t?.dbId ?? t?.mysqlId ?? null,
+    mysqlId: t?.mysqlId ?? t?.dbId ?? null,
     InstanceID: String(t?.InstanceID || t?._id || '').trim(),
     ActivityID: String(t?.ActivityID || '').trim(),
       projectId,
@@ -1463,7 +1466,6 @@ export default function UserSpecificPT({ useLayout = false }) {
   }, [kfInstance]);
 
   const loadHubTaskCounts = useCallback(async () => {
-    if (!kfInstance?.api) return;
     try {
       const hubCounts = await fetchUserHubTaskCounts(kfInstance);
       setHubTaskCounts({
@@ -1477,9 +1479,8 @@ export default function UserSpecificPT({ useLayout = false }) {
     }
   }, [kfInstance]);
 
-  /** mis-table pattern: one active view, one page; activity counts are cached briefly. */
+  /** Local portfolio first; Kissflow process APIs only if the local load fails. */
   const loadHubTableTasks = useCallback(async () => {
-    if (!kfInstance?.api) return;
     setHubTableTasksLoading(true);
     try {
       // Warm count cache first (cheap) so Open/Closed list can reuse pending/participated steps.
@@ -1711,6 +1712,9 @@ export default function UserSpecificPT({ useLayout = false }) {
           const end = p.revisedEndDate ?? p.originalEndDate ?? null;
           return enrichProjectScheduleHealth({
             id: String(p.id ?? '').trim(),
+            dbId: p.dbId ?? p.mysqlId ?? null,
+            recordId: p.recordId ?? p.dbId ?? null,
+            mysqlId: p.mysqlId ?? p.dbId ?? null,
             name: p.name ?? '—',
             owner: p.owner ?? '—',
             ownerId: p.ownerId ?? '',
@@ -2668,8 +2672,7 @@ export default function UserSpecificPT({ useLayout = false }) {
   const handleOpenTaskDetail = useCallback(
     (row) => {
       if (!row) return false;
-      setDetailModal({ type: 'task', row });
-      return true;
+      return openPmRecord('task', row);
     },
     [],
   );
@@ -2677,8 +2680,7 @@ export default function UserSpecificPT({ useLayout = false }) {
   const openMyWorkProjectAccordionTaskDetail = useCallback(
     (row) => {
       if (!row) return false;
-      setDetailModal({ type: 'task', row });
-      return true;
+      return openPmRecord('task', row);
     },
     [],
   );
@@ -2686,23 +2688,20 @@ export default function UserSpecificPT({ useLayout = false }) {
   const handleOpenMyTeamSubtaskDetail = useCallback(
     (row) => {
       if (!row) return false;
-      setDetailModal({ type: 'subtask', row });
-      return true;
+      return openPmRecord('subtask', row);
     },
     [],
   );
 
   const openUsptSubtaskDetail = useCallback((sub) => {
     if (!sub) return false;
-    setDetailModal({ type: 'subtask', row: sub });
-    return true;
+    return openPmRecord('subtask', sub);
   }, []);
 
   const handleOpenProjectDetail = useCallback(
     (row) => {
       if (!row) return false;
-      setDetailModal({ type: 'project', row });
-      return true;
+      return openPmRecord('project', row);
     },
     [],
   );
@@ -2710,8 +2709,7 @@ export default function UserSpecificPT({ useLayout = false }) {
   const openMyWorkProjectPopup = useCallback(
     (row) => {
       if (!row) return false;
-      setDetailModal({ type: 'project', row });
-      return true;
+      return openPmRecord('project', row);
     },
     [],
   );
@@ -2932,10 +2930,10 @@ export default function UserSpecificPT({ useLayout = false }) {
   }, [tablePage, tableTotalPages]);
 
   const content = (
-    <div className="min-w-0 bg-gradient-to-b from-[#edf1ff] via-[#f6f8ff] to-[#f2ecff]">
+    <div className="min-w-0">
       <div className="min-w-0 p-2 pb-5 sm:p-4 sm:pb-6">
         <div
-          className="relative z-20 -mx-2 mb-3 min-w-0 overflow-visible border-b border-slate-200/60 bg-[#edf1ff]/95 px-3 py-2.5 sm:sticky sm:top-0 sm:z-30 sm:-mx-4 sm:mb-4 sm:bg-[#edf1ff]/90 sm:px-4 sm:py-2.5 sm:backdrop-blur-md"
+          className="relative z-20 -mx-2 mb-3 min-w-0 overflow-visible border-b border-slate-200/70 bg-white/90 px-3 py-2.5 sm:sticky sm:top-0 sm:z-30 sm:-mx-4 sm:mb-4 sm:bg-white/92 sm:px-4 sm:py-2.5 sm:backdrop-blur-md"
           ref={headerStickyRef}
         >
           <div className="mx-auto flex max-w-[1800px] min-w-0 flex-col gap-2.5">

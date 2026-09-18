@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS `record_comments` (
   `created_by_user_id` INT UNSIGNED NULL,
   `created_by_name` VARCHAR(191) NULL,
   `created_at` DATETIME NULL,
+  `deleted_at` DATETIME NULL,
   PRIMARY KEY (`id`),
   KEY `idx_comments_item` (`item_type`, `item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS `record_files` (
   `created_by_user_id` INT UNSIGNED NULL,
   `created_by_name` VARCHAR(191) NULL,
   `created_at` DATETIME NULL,
+  `deleted_at` DATETIME NULL,
   PRIMARY KEY (`id`),
   KEY `idx_files_item` (`item_type`, `item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

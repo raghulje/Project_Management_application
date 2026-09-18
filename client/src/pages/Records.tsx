@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { projectsApi, subtasksApi, tasksApi } from '../api/client'
 import ResourceTable from '../components/ResourceTable'
 import { isClosedStatus, ReopenBadge, ReopenDialog, RevisionLog, StatusPill, fmt } from './WorkspaceKit'
+import { RecordActivity } from './RecordActivity'
 import KanbanBoard from './KanbanBoard'
 import { useAuth } from '../api/AuthContext'
 import { crumbState, navState, pageCrumbs, smartBack } from '../lib/recordNav'
@@ -21,7 +22,7 @@ function RelatedTable({
   const from = navState(loc)
   const wrapKeys = new Set(['name', 'project_name', 'task_name', 'title', 'detail', 'notes'])
   return (
-    <div className="fr-table-wrap">
+    <div className="fr-table-wrap is-cards">
       <table className="fr-table">
         <thead>
           <tr>{columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr>
@@ -38,7 +39,7 @@ function RelatedTable({
                   : wrapKeys.has(c.key)
                     ? <span className="fr-name-cell"><span className="fr-name">{fmt(r[c.key])}</span></span>
                     : fmt(r[c.key])
-                return <td key={c.key}>{href ? <Link to={href} state={from}>{val}</Link> : val}</td>
+                return <td key={c.key} data-label={c.label}>{href ? <Link to={href} state={from}>{val}</Link> : val}</td>
               })}
             </tr>
           ))}
@@ -115,6 +116,7 @@ export function ProjectsList() {
         >
           <input className="fr-search" placeholder="Search records..." value={q} onChange={(e) => setQ(e.target.value)} />
           {extra}
+          <Link className="ws-btn ghost" to="/projects/import"><i className="ri-file-excel-2-line" />Import</Link>
           <Link className="ws-btn" to="/projects/new" state={hereState}><i className="ri-add-line" />Create</Link>
         </FrHeader>
         <KanbanBoard
@@ -135,18 +137,25 @@ export function ProjectsList() {
       subtitle={`${total} total records`}
       createTo="/projects/new"
       createLabel="Create"
-      extra={extra}
+      extra={<>{extra}<Link className="ws-btn ghost" to="/projects/import"><i className="ri-file-excel-2-line" />Import</Link></>}
       rows={rows}
       total={total}
       search={q}
       onSearch={setQ}
-      defaultSort={{ key: 'kissflow_id', order: 'asc' }}
+      noun="project"
+      defaultSort={{ key: 'project_code', order: 'asc' }}
+      onExport={(ids) => projectsApi.exportFile(ids)}
+      onBulkUpdate={async (ids, patch) => {
+        const r = await projectsApi.bulkUpdate(ids, patch)
+        await load()
+        return r
+      }}
       onDeleteMany={async (ids) => {
         await Promise.all(ids.map((id) => projectsApi.remove(id)))
         await load()
       }}
       columns={[
-        { key: 'name', label: 'Project Name', kind: 'name', subKey: 'kissflow_id', href: (r) => `/projects/${r.id}` },
+        { key: 'name', label: 'Project Name', kind: 'name', subKey: 'project_code', href: (r) => `/projects/${r.id}` },
         { key: 'project_owner_name', label: 'Owner', kind: 'person' },
         { key: 'start_date', label: 'Start Date', kind: 'date' },
         { key: 'end_date', label: 'End Date', kind: 'date' },
@@ -206,8 +215,8 @@ export function ProjectDetail() {
       <FrAcc>
         <FrSection label="Overview">
           <FrGrid>
-            <FrValue label="Kissflow id">{fmt(row.kissflow_id)}</FrValue>
             <FrValue label="Project code">{fmt(row.project_code)}</FrValue>
+            {row.kissflow_id ? <FrValue label="Legacy id">{fmt(row.kissflow_id)}</FrValue> : null}
             <FrValue label="Company">{fmt(row.company_name)}</FrValue>
             <FrValue label="Project type">{fmt(row.project_type)}</FrValue>
             <FrValue label="Functions">{fmt(row.function_type)}</FrValue>
@@ -286,6 +295,7 @@ export function ProjectDetail() {
         <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
+        <RecordActivity itemType="project" itemId={recordId} />
       </FrAcc>
     </FrPage>
   )
@@ -310,11 +320,23 @@ export function TasksList() {
       subtitle={`${total} total records`}
       createTo="/tasks/new"
       createLabel="Create"
-      extra={<Link className="ws-btn ghost" to="/board" state={navState(loc)}><i className="ri-kanban-view" />Board</Link>}
+      extra={
+        <>
+          <Link className="ws-btn ghost" to="/board" state={navState(loc)}><i className="ri-kanban-view" />Board</Link>
+          <Link className="ws-btn ghost" to="/tasks/import"><i className="ri-file-excel-2-line" />Import</Link>
+        </>
+      }
       rows={rows}
       total={total}
       search={q}
       onSearch={setQ}
+      noun="task"
+      onExport={(ids) => tasksApi.exportFile(ids)}
+      onBulkUpdate={async (ids, patch) => {
+        const r = await tasksApi.bulkUpdate(ids, patch)
+        await load()
+        return r
+      }}
       onDeleteMany={async (ids) => {
         await Promise.all(ids.map((id) => tasksApi.remove(id)))
         await load()
@@ -422,6 +444,7 @@ export function TaskDetail() {
         <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
+        <RecordActivity itemType="task" itemId={recordId} />
       </FrAcc>
     </FrPage>
   )
@@ -444,16 +467,24 @@ export function SubtasksList() {
       subtitle={`${total} total records`}
       createTo="/subtasks/new"
       createLabel="Create"
+      extra={<Link className="ws-btn ghost" to="/subtasks/import"><i className="ri-file-excel-2-line" />Import</Link>}
       rows={rows}
       total={total}
       search={q}
       onSearch={setQ}
+      noun="subtask"
+      onExport={(ids) => subtasksApi.exportFile(ids)}
+      onBulkUpdate={async (ids, patch) => {
+        const r = await subtasksApi.bulkUpdate(ids, patch)
+        await load()
+        return r
+      }}
       onDeleteMany={async (ids) => {
         await Promise.all(ids.map((id) => subtasksApi.remove(id)))
         await load()
       }}
       columns={[
-        { key: 'name', label: 'Subtask Name', kind: 'name', href: (r) => `/subtasks/${r.id}` },
+        { key: 'name', label: 'Subtask Name', kind: 'name', subKey: 'subtask_code', href: (r) => `/subtasks/${r.id}` },
         { key: 'task_name', label: 'Task', kind: 'text', href: (r) => r.task_id ? `/tasks/${r.task_id}` : '/tasks' },
         { key: 'project_name', label: 'Project', kind: 'text', href: (r) => r.project_id ? `/projects/${r.project_id}` : '/projects' },
         { key: 'assigned_to_name', label: 'Assigned To', kind: 'person' },
@@ -525,6 +556,7 @@ export function SubtaskDetail() {
       <FrAcc>
         <FrSection label="Overview">
           <FrGrid>
+            <FrValue label="Subtask code">{fmt(row.subtask_code)}</FrValue>
             <FrValue label="Parent task">
               {row.task_id
                 ? <Link to={`/tasks/${row.task_id}?tab=subtasks`} state={crumbState(loc, `/tasks/${row.task_id}?tab=subtasks`)}>{fmt(row.task_name)}</Link>
@@ -546,6 +578,7 @@ export function SubtaskDetail() {
         <FrSection label="Audit log" count={Number(row.revision_count || revs.length || 0)}>
           <RevisionLog rows={revs} />
         </FrSection>
+        <RecordActivity itemType="subtask" itemId={recordId} />
       </FrAcc>
     </FrPage>
   )

@@ -55,7 +55,6 @@ export default function UserHubTasksPage({ useLayout = false }) {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const loadStatusCounts = useCallback(async () => {
-    if (!kfInstance?.api) return null;
     try {
       const hubCounts = await fetchUserHubTaskCounts(kfInstance);
       setTaskCounts({
@@ -72,7 +71,6 @@ export default function UserHubTasksPage({ useLayout = false }) {
   }, [kfInstance]);
 
   const loadProcessTasks = useCallback(async () => {
-    if (!kfInstance?.api) return;
     setProcessTasksLoading(true);
     try {
       // Counts first (cached) so Open/Closed list reuses activity steps.
@@ -125,6 +123,12 @@ export default function UserHubTasksPage({ useLayout = false }) {
       if (typeof unsub === 'function') unsub();
     };
   }, [kfInstance]);
+
+  useEffect(() => {
+    const onChanged = () => setRefreshTick((n) => n + 1);
+    window.addEventListener('pm-records-changed', onChanged);
+    return () => window.removeEventListener('pm-records-changed', onChanged);
+  }, []);
 
   useEffect(() => {
     setSelectedDraftIds(new Set());

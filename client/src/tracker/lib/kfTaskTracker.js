@@ -453,6 +453,9 @@ export function mapProcessSubtaskItem(item) {
 
   return {
     id: item.id,
+    dbId: item.dbId ?? item.mysqlId ?? item.recordId ?? null,
+    recordId: item.recordId ?? item.dbId ?? item.mysqlId ?? null,
+    mysqlId: item.mysqlId ?? item.dbId ?? null,
     parentTaskBusinessId: item.parentTaskBusinessId,
     taskName: displayName,
     subtaskName: displayName,

@@ -43,14 +43,17 @@ export async function reopenRecord(opts: {
   const prev = counts.get(opts.itemId) || 0
   const next = prev + 1
   const fromStatus = String(existing.status || 'Closed')
+  const ts = now()
   await run(
-    `UPDATE ${table} SET status = ?, updated_at = ? WHERE id = ?`,
-    [toStatus, now(), opts.itemId],
+    `UPDATE ${table} SET status = ?, closed_at = NULL, closed_by_user_id = NULL, updated_by_user_id = ?, updated_at = ? WHERE id = ?`,
+    [toStatus, opts.user?.id ?? null, ts, opts.itemId],
   )
   await recordRevision({
     itemType: opts.itemType,
     itemId: opts.itemId,
     user: opts.user,
+    action: 'reopen',
+    reason,
     changes: [
       { field: 'status', label: 'Status', from: fromStatus, to: toStatus },
       { field: 'reopen_count', label: 'Re-opened', from: prev ? `${prev}x` : '—', to: `${next}x` },

@@ -110,6 +110,45 @@ function crud(base: string) {
         method: 'POST',
         json: { reason, status },
       }),
+    importFile: (file: File) => {
+      const body = new FormData()
+      body.append('file', file)
+      return api<{ status: string; messages: string[]; payload: Record<string, unknown> }>(`${base}/import`, { method: 'POST', body })
+    },
+    downloadTemplate: async () => {
+      const t = token()
+      const res = await fetch(`${getApiBase()}${base}/import/template`, {
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+      })
+      if (!res.ok) throw new Error('Could not download template')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${base.replace('/', '')}-import-template.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    exportFile: async (ids?: number[]) => {
+      const t = token()
+      const q = ids?.length ? `?ids=${ids.join(',')}` : ''
+      const res = await fetch(`${getApiBase()}${base}/export${q}`, {
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+      })
+      if (!res.ok) throw new Error('Could not export records')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${base.replace('/', '')}-export.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    bulkUpdate: (ids: number[], patch: { status?: string; priority?: string; refs?: string[] }) =>
+      api<{ status: string; messages: string[]; payload: Record<string, unknown> }>(`${base}/bulk`, {
+        method: 'PUT',
+        json: { ids, ...patch },
+      }),
   }
 }
 

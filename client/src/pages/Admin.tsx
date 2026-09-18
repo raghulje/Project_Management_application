@@ -28,15 +28,18 @@ const GROUPS = [
     label: 'Records',
     tiles: [
       { to: '/projects', icon: 'ri-folder-3-line', title: 'Projects', desc: 'Create, edit, and archive' },
+      { to: '/projects/import', icon: 'ri-file-excel-2-line', title: 'Import projects', desc: 'Excel or CSV' },
       { to: '/tasks', icon: 'ri-checkbox-multiple-line', title: 'Tasks', desc: 'Work items and owners' },
+      { to: '/tasks/import', icon: 'ri-file-excel-2-line', title: 'Import tasks', desc: 'Excel or CSV' },
       { to: '/subtasks', icon: 'ri-split-cells-horizontal', title: 'Subtasks', desc: 'Breakdown of delivery' },
+      { to: '/subtasks/import', icon: 'ri-file-excel-2-line', title: 'Import subtasks', desc: 'Excel or CSV' },
     ],
   },
   {
     label: 'Operations',
     tiles: [
       { to: '/settings/notifications', icon: 'ri-notification-3-line', title: 'Notifications', desc: 'Triggers, templates, recipients' },
-      { to: '/admin/email-logs', icon: 'ri-mail-send-line', title: 'Email logs', desc: 'Sent, failed, retrigger' },
+      { to: '/admin/email-logs', icon: 'ri-notification-3-line', title: 'Notification logs', desc: 'Email, user activity, retrigger' },
     ],
   },
 ]
@@ -124,7 +127,7 @@ export function RolesEditor() {
       {msg ? <Alert kind="ok">{msg}</Alert> : null}
       <FrPanel>
         <div className="rl-caption">Roles ({rows.length})</div>
-        <div className="fr-table-wrap">
+        <div className="fr-table-wrap is-cards">
           <table className="fr-table rl-table">
             <thead>
               <tr>
@@ -141,16 +144,16 @@ export function RolesEditor() {
                 <tr><td colSpan={6} className="fr-empty">No roles found</td></tr>
               ) : rows.map((r, i) => (
                 <tr key={String(r.id)}>
-                  <td className="rl-num">{i + 1}</td>
-                  <td>
+                  <td className="rl-num" data-label="#">{i + 1}</td>
+                  <td data-label="Roles">
                     <button className="rl-role-name" type="button" onClick={() => setPermRole(r)}>
                       {String(r.name)}
                     </button>
                   </td>
-                  <td className="rl-muted">{String(r.description || '')}</td>
-                  <td>{Number(r.users_count || 0)}</td>
-                  <td>0</td>
-                  <td className="rl-act">
+                  <td className="rl-muted" data-label="Description">{String(r.description || '')}</td>
+                  <td data-label="Users">{Number(r.users_count || 0)}</td>
+                  <td data-label="Groups">0</td>
+                  <td className="rl-act" data-label="Actions">
                     <button className="rl-manage" type="button" onClick={() => setMemberRole(r)}>
                       Manage members
                     </button>

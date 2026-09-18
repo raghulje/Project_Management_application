@@ -105,6 +105,13 @@ export async function listEmailLogs(q: {
   return { rows, total: Number(totalRow?.c || 0), page, limit }
 }
 
+export async function listEmailLogTypes() {
+  const rows = await all<{ email_type: string }>(
+    `SELECT DISTINCT email_type FROM email_logs WHERE email_type IS NOT NULL AND email_type != '' ORDER BY email_type ASC`,
+  )
+  return rows.map((r) => String(r.email_type))
+}
+
 export async function getEmailLog(id: number) {
   return get<Record<string, unknown>>(`SELECT * FROM email_logs WHERE id = ?`, [id])
 }

@@ -38,6 +38,7 @@ export default function BoardPage() {
           className="ws-filter-select"
         />
         <Link className="ws-btn ghost" to="/tasks" state={hereState}><i className="ri-list-check-2" />List view</Link>
+        <Link className="ws-btn ghost" to="/tasks/import"><i className="ri-file-excel-2-line" />Import</Link>
         <Link className="ws-btn" to="/tasks/new" state={hereState}><i className="ri-add-line" />New task</Link>
       </FrHeader>
       <KanbanBoard

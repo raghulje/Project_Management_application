@@ -94,3 +94,21 @@ export async function runOverdueAlerts() {
 
   return { sent, skipped }
 }
+
+let overdueSchedulerStarted = false
+
+/** Same idea as P2P SLA mail: periodically email once per overdue task/subtask. */
+export function startOverdueAlertsScheduler() {
+  if (overdueSchedulerStarted) return
+  overdueSchedulerStarted = true
+  const ms = Number(process.env.OVERDUE_CHECK_INTERVAL_MS) || 15 * 60 * 1000
+  const tick = () => {
+    void runOverdueAlerts().then((r) => {
+      if (r.sent) console.log(`Overdue alerts: queued ${r.sent}, skipped ${r.skipped}`)
+    }).catch((err) => {
+      console.warn('Overdue alerts failed:', err instanceof Error ? err.message : err)
+    })
+  }
+  setTimeout(tick, 20_000)
+  setInterval(tick, ms)
+}

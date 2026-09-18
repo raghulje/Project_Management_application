@@ -33,6 +33,6 @@ export function isEmployeeRole(roles: string[], isAdmin = false, isLeadership = 
 }
 
 export function homePathForRole(opts: { isAdmin: boolean; isLeadership: boolean; isEmployee: boolean }) {
-  if (opts.isEmployee) return '/hub/projects'
+  if (opts.isEmployee) return '/dashboard/my-work'
   return '/'
 }

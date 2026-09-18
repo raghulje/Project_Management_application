@@ -35,7 +35,8 @@ import {
   openUserHubSubtaskProcessPopup,
 } from './lib/kfUserHubPopups.js';
 import DashboardDetailModal from './components/DashboardDetailModal.jsx';
-import { openPmRecord } from './pmApi.js';
+import { goPm, openPmRecord } from './pmApi.js';
+import HubBulkBar, { isFinishedStatus, openRowsOf, rowSelectKey } from './components/HubBulkBar.jsx';
 import { isSubtaskCompleted } from './lib/kfSubtaskTracker.js';
 import { compareCreatedAt, matchesCreatedDateRange } from './lib/dashboardCreatedDateFilters.js';
 
@@ -173,6 +174,7 @@ export default function UserHubSubTasksPage({
   const [statusCounts, setStatusCounts] = useState(EMPTY_STATUS_COUNTS);
 
   const [selectedDraftIds, setSelectedDraftIds] = useState(() => new Set());
+  const [selectedOpen, setSelectedOpen] = useState(() => new Set());
   const [deletingDrafts, setDeletingDrafts] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [tablePage, setTablePage] = useState(1);
@@ -191,7 +193,6 @@ export default function UserHubSubTasksPage({
   void useLayout;
 
   const loadStatusCounts = useCallback(async () => {
-    if (!kfInstance?.api) return null;
     try {
       const hubCounts = await fetchUserHubSubtaskCounts(kfInstance);
       setSubtaskCounts({
@@ -211,35 +212,35 @@ export default function UserHubSubTasksPage({
     if (myTeamMode) return;
     setProcessSubtasksLoading(true);
     try {
-      if (kfInstance?.api) {
-        await loadStatusCounts();
-        let result;
-        if (taskScope === 'created') {
-          result = await fetchMyCreatedSubtasksByStatus(kfInstance, createdStatusFilter, {
-            page: 1,
-            pageSize: HUB_SUBTASK_PAGE_SIZE,
-          });
-        } else if (assignedStatus === 'open') {
-          result = await fetchAssignedOpenProcessSubtasks(kfInstance, {
-            page: 1,
-            pageSize: HUB_SUBTASK_PAGE_SIZE,
-          });
-        } else {
-          result = await fetchAssignedClosedProcessSubtasks(kfInstance, {
-            page: 1,
-            pageSize: HUB_SUBTASK_PAGE_SIZE,
-          });
-        }
-        const { rows } = unwrapSubtaskPageResult(result);
-        if (Array.isArray(rows) && rows.length) {
-          const mine = rows.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, taskScope));
+      await loadStatusCounts();
+      let result;
+      if (taskScope === 'created') {
+        result = await fetchMyCreatedSubtasksByStatus(kfInstance, createdStatusFilter, {
+          page: 1,
+          pageSize: HUB_SUBTASK_PAGE_SIZE,
+        });
+      } else if (assignedStatus === 'open') {
+        result = await fetchAssignedOpenProcessSubtasks(kfInstance, {
+          page: 1,
+          pageSize: HUB_SUBTASK_PAGE_SIZE,
+        });
+      } else {
+        result = await fetchAssignedClosedProcessSubtasks(kfInstance, {
+          page: 1,
+          pageSize: HUB_SUBTASK_PAGE_SIZE,
+        });
+      }
+      const { rows } = unwrapSubtaskPageResult(result);
+      if (Array.isArray(rows) && rows.length) {
+        const mine = rows.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, taskScope));
+        if (mine.length) {
           setProcessSubtasks(mine);
           return;
         }
       }
       const { fetchPmSubtasks } = await import('./pmApi.js');
-      const rows = await fetchPmSubtasks();
-      const allMine = (Array.isArray(rows) ? rows : []).filter((row) => subtaskMatchesLoggedInUser(scopeUser, row));
+      const localRows = await fetchPmSubtasks();
+      const allMine = (Array.isArray(localRows) ? localRows : []).filter((row) => subtaskMatchesLoggedInUser(scopeUser, row));
       const scoped = allMine.filter((row) => subtaskMatchesLoggedInUser(scopeUser, row, taskScope));
       const visible = taskScope === 'assigned'
         ? scoped.filter((row) => (assignedStatus === 'closed' ? isClosedLikeStatus(row?.status) : !isClosedLikeStatus(row?.status)))
@@ -665,6 +666,7 @@ export default function UserHubSubTasksPage({
     (row) => {
       if (!row) return;
       if (typeof onOpenRow === 'function' && onOpenRow(row) !== false) return;
+      if (openPmRecord('subtask', row)) return;
       const opened = openUserHubSubtaskProcessPopup(kfInstance, row, {
         onClosed: scheduleRefreshAfterPopup,
         ...(processPopupId ? { popupId: processPopupId } : {}),
@@ -693,7 +695,9 @@ export default function UserHubSubTasksPage({
       ? 'Subtasks Created by Me'
       : 'Subtasks Assigned to me';
 
-  const colSpan = (showDraftBulkSelect ? 1 : 0) + 8;
+  const colSpan = 9;
+  const pageOpenIds = openRowsOf(pageRows).map(rowSelectKey).filter(Boolean);
+  const allOpenPageSelected = pageOpenIds.length > 0 && pageOpenIds.every((id) => selectedOpen.has(id));
   const isTableLoading = myTeamMode ? Boolean(myTeamLoading) : processSubtasksLoading;
 
   return (
@@ -715,19 +719,29 @@ export default function UserHubSubTasksPage({
               subtitle={`Your subtasks · ${displayRole}`}
               className="mb-0"
             />
-            <button
-              type="button"
-              onClick={handleCreate}
-              disabled={creating}
-              className="inline-flex min-h-[40px] w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[#1E88E5] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:self-auto sm:rounded-2xl sm:text-sm"
-            >
-              {creating ? (
-                <i className="ri-loader-4-line animate-spin" aria-hidden />
-              ) : (
-                <i className="ri-add-line" aria-hidden />
-              )}
-              {creating ? 'Creating…' : 'Create subtask'}
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={() => goPm('/subtasks/import')}
+                className="inline-flex min-h-[40px] w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:w-auto sm:self-auto sm:rounded-2xl sm:text-sm"
+              >
+                <i className="ri-file-excel-2-line" aria-hidden />
+                Import
+              </button>
+              <button
+                type="button"
+                onClick={handleCreate}
+                disabled={creating}
+                className="inline-flex min-h-[40px] w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[#1E88E5] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:self-auto sm:rounded-2xl sm:text-sm"
+              >
+                {creating ? (
+                  <i className="ri-loader-4-line animate-spin" aria-hidden />
+                ) : (
+                  <i className="ri-add-line" aria-hidden />
+                )}
+                {creating ? 'Creating…' : 'Create subtask'}
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -759,6 +773,14 @@ export default function UserHubSubTasksPage({
             assignedLabel="Subtasks Assigned to me"
             createdLabel="Subtasks Created by Me"
             ownershipAriaLabel="Subtask ownership"
+          />
+          <HubBulkBar
+            kind="subtask"
+            pageRows={pageRows}
+            allRows={filteredRows}
+            selected={selectedOpen}
+            onSelected={setSelectedOpen}
+            onChanged={() => setRefreshTick((n) => n + 1)}
           />
           {isTableLoading ? (
             <p className="mt-2 text-[11px] font-medium text-slate-500">
@@ -813,17 +835,24 @@ export default function UserHubSubTasksPage({
             <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/70">
-                  {showDraftBulkSelect ? (
-                    <th className="w-10 px-4 py-3">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all draft subtasks on this page"
-                        checked={allDraftPageSelected}
-                        onChange={(e) => handleToggleAllDraftsSelect(e.target.checked, draftPageRowIds)}
-                        className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
-                      />
-                    </th>
-                  ) : null}
+                  <th className="w-10 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Select open subtasks on this page"
+                      checked={allOpenPageSelected || allDraftPageSelected}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSelectedOpen((prev) => {
+                          const next = new Set(prev);
+                          if (checked) pageOpenIds.forEach((id) => next.add(id));
+                          else pageOpenIds.forEach((id) => next.delete(id));
+                          return next;
+                        });
+                        if (showDraftBulkSelect) handleToggleAllDraftsSelect(checked, draftPageRowIds);
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
+                    />
+                  </th>
                   {SUBTASK_TABLE_COLUMNS.map((col) => {
                     const filterCfg = col.filter ? columnFilterProps[col.filter] : null;
                     return (
@@ -851,23 +880,35 @@ export default function UserHubSubTasksPage({
                 ) : (
                   pageRows.map((row) => {
                     const draftId = showDraftBulkSelect ? resolveSubtaskDraftDeleteId(row) : '';
+                    const openKey = rowSelectKey(row);
+                    const finished = isFinishedStatus(row.status);
                     return (
                       <tr
                         key={row.id}
                         onClick={() => handleOpenRow(row)}
                         className="cursor-pointer border-b border-slate-100 transition hover:bg-slate-50/80"
                       >
-                        {showDraftBulkSelect ? (
-                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              aria-label={`Select draft ${row.subtaskName || ''}`}
-                              checked={draftId ? selectedDraftIds.has(draftId) : false}
-                              onChange={() => handleToggleDraftSelect(draftId)}
-                              className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
-                            />
-                          </td>
-                        ) : null}
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={finished ? 'Already closed' : `Select ${row.subtaskName || 'subtask'}`}
+                            disabled={finished}
+                            checked={Boolean((openKey && selectedOpen.has(openKey)) || (draftId && selectedDraftIds.has(draftId)))}
+                            onChange={() => {
+                              if (finished) return;
+                              if (openKey) {
+                                setSelectedOpen((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(openKey)) next.delete(openKey);
+                                  else next.add(openKey);
+                                  return next;
+                                });
+                              }
+                              if (draftId) handleToggleDraftSelect(draftId);
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0] disabled:cursor-not-allowed disabled:opacity-40"
+                          />
+                        </td>
                         <td className="px-5 py-3">
                           <p className="max-w-[220px] truncate text-sm text-slate-800">{row.subtaskName}</p>
                           {row.parentTaskId && row.parentTaskId !== '—' ? (
@@ -935,21 +976,33 @@ export default function UserHubSubTasksPage({
             ) : (
               pageRows.map((row) => {
                 const draftId = showDraftBulkSelect ? resolveSubtaskDraftDeleteId(row) : '';
+                const openKey = rowSelectKey(row);
+                const finished = isFinishedStatus(row.status);
                 return (
                   <div
                     key={row.id}
                     className="overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
                   >
                     <div className="flex items-start gap-2">
-                      {showDraftBulkSelect ? (
-                        <input
-                          type="checkbox"
-                          aria-label={`Select draft ${row.subtaskName || ''}`}
-                          checked={draftId ? selectedDraftIds.has(draftId) : false}
-                          onChange={() => handleToggleDraftSelect(draftId)}
-                          className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0]"
-                        />
-                      ) : null}
+                      <input
+                        type="checkbox"
+                        aria-label={finished ? 'Already closed' : `Select ${row.subtaskName || 'subtask'}`}
+                        disabled={finished}
+                        checked={Boolean((openKey && selectedOpen.has(openKey)) || (draftId && selectedDraftIds.has(draftId)))}
+                        onChange={() => {
+                          if (finished) return;
+                          if (openKey) {
+                            setSelectedOpen((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(openKey)) next.delete(openKey);
+                              else next.add(openKey);
+                              return next;
+                            });
+                          }
+                          if (draftId) handleToggleDraftSelect(draftId);
+                        }}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-[#1E62F0] focus:ring-[#1E62F0] disabled:cursor-not-allowed disabled:opacity-40"
+                      />
                       <button
                         type="button"
                         onClick={() => handleOpenRow(row)}
